@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<meta name="theme-color" content="#2233C4">
+<meta name="theme-color" content="#0A5C4F">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Kuenta">
@@ -20,23 +20,26 @@
 <style>
 /* Kuenta — app móvil de una sola pantalla con vistas y hojas inferiores */
 :root{
-  --bg:#F1F2F8; --bg-outer:#E3E5EF; --surface:#FFFFFF; --surface-2:#E8EAF4; --fg:#15172B; --muted:#646985;
-  --line:#DCDFEC; --brand:#2233C4; --brand-2:#141D7A; --brand-soft:#E3E6FB; --on-brand:#FFFFFF;
-  --gold:#A87508; --gold-soft:#F7EDD3; --pos:#0A875C; --pos-soft:#DDF3EA; --neg:#C42F3F; --neg-soft:#FBE3E6;
-  --warn:#B86F00; --warn-soft:#FCEFD6; --shadow:rgba(24,28,80,.16); --scrim:rgba(14,16,36,.45);
+  --bg:#F2F5F3; --bg-outer:#E2E9E5; --surface:#FFFFFF; --surface-2:#E6EDE9; --fg:#0F1B2D; --muted:#5B6A70;
+  --line:#D8E2DD; --brand:#0B7F5C; --brand-2:#0A5C4F; --brand-soft:#DCF1E7; --on-brand:#FFFFFF;
+  --card-a:#0A5C4F; --card-b:#13A26F; --accent:#F2A922;
+  --gold:#A06C05; --gold-soft:#FBEFD3; --pos:#0E8A58; --pos-soft:#DDF3E8; --neg:#C42F3F; --neg-soft:#FBE3E6;
+  --warn:#B86F00; --warn-soft:#FCEFD6; --shadow:rgba(10,50,40,.16); --scrim:rgba(8,20,18,.45);
   --f-display:'Sora', ui-sans-serif, system-ui, sans-serif;
   --f-body:'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --r:18px; color-scheme:light;
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
-  --bg:#0E1020; --bg-outer:#07080F; --surface:#171A2C; --surface-2:#21253A; --fg:#ECEEF9; --muted:#989CB8;
-  --line:#2B3049; --brand:#6474FF; --brand-2:#3442C9; --brand-soft:#232A5C; --on-brand:#FFFFFF;
-  --gold:#E2B24D; --gold-soft:#3A2F14; --pos:#3CC694; --pos-soft:#123629; --neg:#F26D7A; --neg-soft:#3D1A20;
+  --bg:#0B1513; --bg-outer:#050B0A; --surface:#12201C; --surface-2:#1B2C27; --fg:#E8F1ED; --muted:#93A69F;
+  --line:#25372F; --brand:#34D399; --brand-2:#0E7A5E; --brand-soft:#173A2F; --on-brand:#04231A;
+  --card-a:#0A5C4F; --card-b:#13A26F; --accent:#F6BE45;
+  --gold:#F0BC4E; --gold-soft:#3A2E12; --pos:#4ADE9B; --pos-soft:#123629; --neg:#F26D7A; --neg-soft:#3D1A20;
   --warn:#F2B13F; --warn-soft:#3B2C10; --shadow:rgba(0,0,0,.5); --scrim:rgba(0,0,0,.6); color-scheme:dark }}
 :root[data-theme="dark"]{
-  --bg:#0E1020; --bg-outer:#07080F; --surface:#171A2C; --surface-2:#21253A; --fg:#ECEEF9; --muted:#989CB8;
-  --line:#2B3049; --brand:#6474FF; --brand-2:#3442C9; --brand-soft:#232A5C; --on-brand:#FFFFFF;
-  --gold:#E2B24D; --gold-soft:#3A2F14; --pos:#3CC694; --pos-soft:#123629; --neg:#F26D7A; --neg-soft:#3D1A20;
+  --bg:#0B1513; --bg-outer:#050B0A; --surface:#12201C; --surface-2:#1B2C27; --fg:#E8F1ED; --muted:#93A69F;
+  --line:#25372F; --brand:#34D399; --brand-2:#0E7A5E; --brand-soft:#173A2F; --on-brand:#04231A;
+  --card-a:#0A5C4F; --card-b:#13A26F; --accent:#F6BE45;
+  --gold:#F0BC4E; --gold-soft:#3A2E12; --pos:#4ADE9B; --pos-soft:#123629; --neg:#F26D7A; --neg-soft:#3D1A20;
   --warn:#F2B13F; --warn-soft:#3B2C10; --shadow:rgba(0,0,0,.5); --scrim:rgba(0,0,0,.6); color-scheme:dark }
 
 *{box-sizing:border-box}

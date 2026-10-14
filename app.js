@@ -85,7 +85,7 @@ const ic = (n, cls = '') => `<span class="ic ${cls}" aria-hidden="true"><svg vie
 
 const EMOJIS = ['🛒','🍽️','⛽','🚌','🏠','💡','📱','🩺','📚','👕','🎬','💳','💈','🐾','📦','☕','🎮','✈️','🏋️','🎁','💼','📈','🙏','💝'];
 const GOAL_EMOJIS = ['🎯','🛟','🏝️','🚗','🏠','🎓','💍','💻','✈️','🏥','👶','🐷','📱','🎸','🏍️','⛪'];
-const COLORS = ['#2233C4','#0F766E','#16A34A','#CA8A04','#EA580C','#DC2626','#DB2777','#7C3AED','#0EA5E9','#64748B'];
+const COLORS = ['#0B7F5C','#0A5C4F','#0F1B2D','#E8A21C','#EA580C','#DC2626','#DB2777','#7C3AED','#0EA5E9','#64748B'];
 const TYPES = {efectivo:'Efectivo',banco:'Banco',tarjeta:'Tarjeta de crédito',ahorro:'Ahorro',billetera:'Billetera digital',inversion:'Inversión',otro:'Otro'};
 const TYPE_ICON = {efectivo:'💵',banco:'🏦',tarjeta:'💳',ahorro:'🐷',billetera:'📲',inversion:'📈',otro:'👛'};
 const ROLES = {owner:'Dueño', member:'Miembro', viewer:'Solo lectura'};
@@ -430,7 +430,7 @@ function vHome(){
   <div class="top"><div class="hello"><div class="avatar">${esc(name[0])}</div><div style="min-width:0"><b>Hola, ${esc(name)}</b><small>Mes financiero · ${dShort(p.start)} – ${dShort(p.end)}</small></div></div>
     <button class="iconbtn" data-a="nav" data-v="alerts" aria-label="Alertas${unread ? `, ${unread} sin leer` : ''}">${ic('bell')}${unread ? `<span class="dot">${unread > 9 ? '9+' : unread}</span>` : ''}</button></div>
   <div class="cards">
-    ${accs.length ? `<div class="acard" style="background:linear-gradient(140deg,var(--brand),var(--brand-2))">
+    ${accs.length ? `<div class="acard" style="background:linear-gradient(140deg,var(--card-a),var(--card-b))">
       <div class="row"><span class="lbl">Saldo total</span><span class="chip-w">${accs.length} ${accs.length === 1 ? 'cuenta' : 'cuentas'}</span></div>
       <div class="bal num">${money(totalHNL)}</div>
       <div class="foot"><div class="mini"><div><small>Ingresos</small><b>${short(sm.inc)}</b></div><div><small>Gastos</small><b>${short(sm.exp)}</b></div><div><small>Dado</small><b>${short(sm.gen)}</b></div></div>${totalUSD ? `<span>+ ${money(totalUSD, 'USD')}</span>` : ''}</div>
@@ -948,7 +948,7 @@ async function exportPdf(){
   const plain = s => String(s ?? '').replace(/[^\u0000-ÿ]/g, '').trim();
   const pm = (n, c = 'HNL') => (n < 0 ? '-' : '') + (c === 'USD' ? '$ ' : 'L ') + nf.format(Math.abs(n));
   const doc = new window.jspdf.jsPDF({unit:'pt', format:'letter'});
-  const brandRGB = [34, 51, 196], W = doc.internal.pageSize.getWidth();
+  const brandRGB = [10, 92, 79], W = doc.internal.pageSize.getWidth();
   doc.setFillColor(...brandRGB); doc.rect(0, 0, W, 72, 'F');
   doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(22); doc.text('kuenta', 40, 44);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
