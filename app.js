@@ -16,6 +16,7 @@ const sb = CONFIGURED ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPAB
 }) : null;
 const BUCKET = 'comprobantes';
 const HISTORY_MONTHS = 24;
+const LOCK_MINUTES = 5; // la app pide PIN/huella tras 5 minutos en segundo plano (fijo, no lo cambia el usuario)
 const PDF_LIBS = [
   ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk'],
   ['https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js', 'sha384-fCAW/rDWORTbQXSiB7mOg0QtQ5c+r0f544y6XoKjuVva0nMBlCpNUjiFeG5iMdS3']
@@ -379,7 +380,7 @@ function vPinSetup(){
   const step = S.form.pinStep || 1;
   return `<div class="lock">${brand}
     <div style="text-align:center;max-width:300px"><b style="font-size:17px">${step === 1 ? 'Crea tu PIN de 4 dígitos' : 'Confírmalo'}</b>
-      <div class="muted" style="font-size:13.5px">Lo pediremos cada vez que abras Kuenta. Se guarda cifrado solo en este teléfono.</div></div>
+      <div class="muted" style="font-size:13.5px">Lo pediremos al abrir Kuenta y tras 5 minutos fuera de la app. Se guarda cifrado solo en este teléfono.</div></div>
     <div class="dots" id="dots">${[0,1,2,3].map(i => `<i class="${i < S.pinEntry.length ? 'f' : ''}"></i>`).join('')}</div>
     <div class="err" style="min-height:20px">${S.form.pinErr ? esc(S.form.pinErr) : ''}</div>
     <div class="keys">${['1','2','3','4','5','6','7','8','9','','0','del'].map(k => k === '' ? '<span></span>'
@@ -1000,8 +1001,6 @@ function vSettings(){
   <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:6px">Seguridad</div>
     <div class="toggle"><div class="t"><b>PIN de acceso</b><small>${pinRec() ? 'Activo en este teléfono' : 'Sin PIN: cualquiera con tu teléfono abre la app'}</small></div><button class="btn ghost sm" data-a="changePin">${pinRec() ? 'Cambiar' : 'Crear'}</button></div>
     <div class="toggle"><div class="t"><b>Huella o Face ID</b><small id="biohint">${bioRec() ? 'Activo en este teléfono' : 'Requiere PIN activo'}</small></div><label class="sw"><input type="checkbox" data-in="bio" ${bioRec() ? 'checked' : ''} ${pinRec() ? '' : 'disabled'} aria-label="Huella o Face ID"><span></span></label></div>
-    <div class="toggle"><div class="t"><b>Bloqueo automático</b><small>Tras estar en segundo plano</small></div>
-      <select class="inp" style="width:auto" data-in="lock_minutes" aria-label="Minutos">${[1,5,15,30].map(v => `<option value="${v}" ${pr.lock_minutes === v ? 'selected' : ''}>${v} min</option>`).join('')}</select></div>
     <div class="toggle"><div class="t"><b>Contraseña</b><small>La de tu cuenta Kuenta</small></div><button class="btn ghost sm" data-a="changePass">Cambiar</button></div>
   </div>
   <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:8px">Apariencia</div>
@@ -1286,7 +1285,7 @@ document.addEventListener('change', e => {
     return;
   }
   if (!k) return;
-  if (['period_start_day','tithe_percent','default_currency','lock_minutes'].includes(k)){
+  if (['period_start_day','tithe_percent','default_currency'].includes(k)){
     const val = k === 'default_currency' ? el.value : Number(el.value);
     guarded(el, async () => { S.profile = await q(sb.from('profiles').update({[k]:val}).eq('id', me()).select().single()); S.ui.repFrom = ''; render();
       if (k === 'period_start_day') toast(`Tu mes financiero ahora inicia el día ${val}`); });
@@ -1309,7 +1308,7 @@ document.addEventListener('visibilitychange', async () => {
   TODAY = localISO(new Date());
   if (!S.user || !S.profile) return;
   const away = Date.now() - hiddenAt;
-  if (hiddenAt && pinRec() && !S.locked && away > (S.profile.lock_minutes || 5) * 60000){ S.locked = true; S.pinEntry = ''; closeSheet(); render(); }
+  if (hiddenAt && pinRec() && !S.locked && away > LOCK_MINUTES * 60000){ S.locked = true; S.pinEntry = ''; closeSheet(); render(); }
   if (Date.now() - S.loadedAt > 60000 && $('#sheet').hidden){ try { await loadAll(); render(); } catch {} }
 });
 
