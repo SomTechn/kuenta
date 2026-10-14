@@ -385,7 +385,7 @@ function vPinSetup(){
     <div class="err" style="min-height:20px">${S.form.pinErr ? esc(S.form.pinErr) : ''}</div>
     <div class="keys">${['1','2','3','4','5','6','7','8','9','','0','del'].map(k => k === '' ? '<span></span>'
       : `<button data-a="pinSetup" data-v="${k}" ${k === 'del' ? 'aria-label="Borrar" style="font-size:16px"' : ''}>${k === 'del' ? '⌫' : k}</button>`).join('')}</div>
-    <button class="textbtn" data-a="skipPin">Ahora no</button></div>`;
+    <button class="textbtn" data-a="signOut">Cerrar sesión</button></div>`;
 }
 function maybeLock(){ if (pinRec()){ S.locked = true; S.pinEntry = ''; } }
 
@@ -999,7 +999,7 @@ function vSettings(){
       <select class="inp" style="width:auto" data-in="default_currency" aria-label="Moneda principal"><option value="HNL" ${pr.default_currency === 'HNL' ? 'selected' : ''}>Lempiras</option><option value="USD" ${pr.default_currency === 'USD' ? 'selected' : ''}>Dólares</option></select></div>
   </div>
   <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:6px">Seguridad</div>
-    <div class="toggle"><div class="t"><b>PIN de acceso</b><small>${pinRec() ? 'Activo en este teléfono' : 'Sin PIN: cualquiera con tu teléfono abre la app'}</small></div><button class="btn ghost sm" data-a="changePin">${pinRec() ? 'Cambiar' : 'Crear'}</button></div>
+    <div class="toggle"><div class="t"><b>PIN de acceso</b><small>Se pide al abrir y tras 5 minutos fuera de la app</small></div><button class="btn ghost sm" data-a="changePin">Cambiar</button></div>
     <div class="toggle"><div class="t"><b>Huella o Face ID</b><small id="biohint">${bioRec() ? 'Activo en este teléfono' : 'Requiere PIN activo'}</small></div><label class="sw"><input type="checkbox" data-in="bio" ${bioRec() ? 'checked' : ''} ${pinRec() ? '' : 'disabled'} aria-label="Huella o Face ID"><span></span></label></div>
     <div class="toggle"><div class="t"><b>Contraseña</b><small>La de tu cuenta Kuenta</small></div><button class="btn ghost sm" data-a="changePass">Cambiar</button></div>
   </div>
@@ -1059,7 +1059,6 @@ const A = {
     if (await bioAvailable()) toast('PIN creado. ¿Activar también tu huella o Face ID?', 'ok', {label:'Activar', run: async () => { await bioEnroll(); toast('Huella activada'); }});
     else toast('PIN creado');
   },
-  skipPin: () => { LS.set('pinSkipped.' + me(), true); S.needPinSetup = false; S.pinEntry = ''; render(); },
   lockNow: () => { S.locked = true; S.pinEntry = ''; closeSheet(); render(); },
   add: el => startAdd(el.dataset.v),
   dType: el => { S.draft.type = el.dataset.v; S.draft.step = 1; S.draft.cat = null; renderAdd(); },
@@ -1324,7 +1323,7 @@ async function boot(fresh){
   try {
     await loadAll();
     if (!fresh) maybeLock();
-    S.needPinSetup = !pinRec() && !LS.get('pinSkipped.' + me());
+    S.needPinSetup = !pinRec(); // el PIN es obligatorio
     render();
     await acceptPendingInvite(); render();
   } catch (e) {
