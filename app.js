@@ -297,7 +297,7 @@ function render(){
   n.hidden = false;
 }
 const subhead = (title, extra = '') => `<div class="subhead"><button class="iconbtn" data-a="back" aria-label="Volver">${ic('back','sm')}</button><h1>${title}</h1>${extra}</div>`;
-const brand = `<div class="brand"><div class="mark">k</div><div class="word">kuenta</div></div>`;
+const brand = `<div class="brand"><img class="logo" src="icons/logo-mark.png" alt="" width="52" height="52"><div class="word">Kuenta</div></div>`;
 const vSplash = () => `<div class="lock">${brand}<div class="spin" role="status" aria-label="Cargando"></div></div>`;
 const vSetupConfig = () => `<div class="lock">${brand}<div class="note" style="max-width:340px">Falta conectar Supabase. Abre <b>config.js</b> y pega la URL de tu proyecto y la clave <b>anon</b>.</div></div>`;
 
@@ -906,7 +906,7 @@ function vReports(){
     const sm = summary(u.repFrom, u.repTo, sc), tx = repTx();
     const sections = [['Ingresos por categoría', breakdown(u.repFrom, u.repTo, sc, 'income')], ['Gastos por categoría', breakdown(u.repFrom, u.repTo, sc, 'expense')], ['Generosidad', breakdown(u.repFrom, u.repTo, sc, 'generosity')]];
     body = `<div class="section panel">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px"><div><div class="eyebrow">Informe ${sc === 'family' ? 'familiar' : 'personal'}</div><h2 style="font-size:18px">${dShort(u.repFrom)} ${u.repFrom.slice(0, 4)} – ${dShort(u.repTo)} ${u.repTo.slice(0, 4)}</h2></div><div class="mark" style="width:30px;height:30px;font-size:15px;border-radius:10px">k</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px"><div><div class="eyebrow">Informe ${sc === 'family' ? 'familiar' : 'personal'}</div><h2 style="font-size:18px">${dShort(u.repFrom)} ${u.repFrom.slice(0, 4)} – ${dShort(u.repTo)} ${u.repTo.slice(0, 4)}</h2></div><img class="logo sm" src="icons/logo-mark.png" alt="Kuenta" width="32" height="32"></div>
       <table class="rep"><tr><td>Ingresos</td><td class="r pos">${money(sm.inc)}</td></tr><tr><td>Gastos</td><td class="r">${money(sm.exp)}</td></tr><tr><td>Generosidad</td><td class="r gen">${money(sm.gen)}</td></tr>
         <tr><td><b>Balance</b></td><td class="r"><b style="color:${sm.net >= 0 ? 'var(--pos)' : 'var(--neg)'}">${money(sm.net)}</b></td></tr><tr><td>Tasa de ahorro</td><td class="r">${sm.rate === null ? '—' : sm.rate.toFixed(1) + '%'}</td></tr></table>
       ${sections.map(([t, arr]) => arr.length ? `<div class="eyebrow" style="margin:16px 0 4px">${t}</div><table class="rep">${arr.map(x => `<tr><td>${esc(x.c.icon)} ${esc(x.c.name)}</td><td class="r">${money(x.v)}</td><td class="r muted">${x.p.toFixed(1)}%</td></tr>`).join('')}</table>` : '').join('')}

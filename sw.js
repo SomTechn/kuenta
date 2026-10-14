@@ -1,7 +1,7 @@
 // Kuenta — Service worker: guarda solo la "cáscara" de la app para abrir rápido.
 // Nunca guarda datos financieros ni respuestas de Supabase.
-const CACHE = 'kuenta-v1';
-const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.json', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'kuenta-v2';
+const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.json', 'icons/logo-mark.png', 'icons/favicon-48.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

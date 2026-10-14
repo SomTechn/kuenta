@@ -12,8 +12,8 @@
 <meta name="description" content="Kuenta: tus finanzas personales y familiares, claras y seguras.">
 <title>Kuenta</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/favicon-48.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap">
@@ -218,7 +218,9 @@ h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:
 .lock .form{width:100%;max-width:340px}
 .brand{display:flex;align-items:center;gap:10px}
 .mark{width:46px;height:46px;border-radius:15px;background:var(--brand);color:var(--on-brand);display:grid;place-items:center;font-family:var(--f-display);font-weight:700;font-size:23px;letter-spacing:-.04em}
-.word{font-family:var(--f-display);font-weight:700;font-size:28px;letter-spacing:-.04em}
+.word{font-family:var(--f-display);font-weight:700;font-size:30px;letter-spacing:-.03em}
+.logo{width:52px;height:52px;display:block;filter:drop-shadow(0 8px 16px rgba(10,90,70,.25))}
+.logo.sm{width:32px;height:32px;filter:none}
 .dots{display:flex;gap:16px;margin:6px 0;justify-content:center}
 .dots i{width:14px;height:14px;border-radius:50%;border:2px solid var(--muted)}
 .dots i.f{background:var(--brand);border-color:var(--brand)}
@@ -256,7 +258,7 @@ code.tok{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:n
 </head>
 <body>
 <div id="app">
-  <main id="view" class="full"><div class="lock"><div class="brand"><div class="mark">k</div><div class="word">kuenta</div></div><div class="spin" role="status" aria-label="Cargando"></div></div></main>
+  <main id="view" class="full"><div class="lock"><div class="brand"><img class="logo" src="icons/logo-mark.png" alt="" width="52" height="52"><div class="word">Kuenta</div></div><div class="spin" role="status" aria-label="Cargando"></div></div></main>
   <nav id="nav" hidden></nav>
   <div id="toast" aria-live="polite"></div>
   <div id="sheet" hidden></div>
