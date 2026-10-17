@@ -1,0 +1,7 @@
+# No publicar en la app: esquema, panel de administración, pruebas y notas
+supabase
+admin
+tests
+.github
+README.md
+*.sql

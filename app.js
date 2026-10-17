@@ -106,6 +106,9 @@ resetState();
 /* ============ consultas locales ============ */
 const me = () => S.user?.id;
 const startDay = () => S.profile?.period_start_day || 1;
+// Lo familiar usa el día de inicio del dueño (igual que las alertas del servidor)
+const famDay = () => (S.family && S.users[S.family.owner]?.sd) || startDay();
+const dayFor = scope => scope === 'family' || scope === 'f' ? famDay() : startDay();
 const acc = id => S.accounts.find(a => a.id === id);
 const cat = id => S.categories.find(c => c.id === id) || UNKNOWN_CAT;
 const uname = id => S.users[id]?.name || (id === me() ? (S.profile?.full_name || 'Tú') : 'Exmiembro');
@@ -143,7 +146,7 @@ function breakdown(start, end, scope, kind){
   return [...m].map(([id, v]) => ({c: id === 'none' ? UNKNOWN_CAT : cat(id), v, p: tot ? v / tot * 100 : 0})).sort((a, b) => b.v - a.v);
 }
 function budgetInfo(b, ref = TODAY){
-  const c = cat(b.cat), p = period(ref);
+  const c = cat(b.cat), p = period(ref, dayFor(c.scope));
   let spent = 0;
   for (const t of S.tx){
     if (t.type !== 'expense' || t.date < p.start || t.date > p.end) continue;
@@ -173,6 +176,7 @@ function errMsg(e){
   if (/row-level security|permission denied/i.test(m)) return 'No tienes permiso para hacer esto.';
   if (/budgets_category_id_key/i.test(m)) return 'Esa categoría ya tiene presupuesto.';
   if (/duplicate key/i.test(m)) return 'Ese registro ya existe.';
+  if (/foreign key/i.test(m)) return 'No se puede eliminar porque está en uso.';
   if (/JWT|session/i.test(m)) return 'Tu sesión venció. Vuelve a entrar.';
   return m || 'Algo salió mal. Intenta de nuevo.';
 }
@@ -204,8 +208,8 @@ async function loadFamily(){
     S.invites = mine.role === 'owner' ? await q(sb.from('family_invitations').select('id,email,role,token,expires_at')
       .eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('created_at', {ascending:false})) : [];
   }
-  const profs = await q(sb.from('profiles').select('id,full_name'));
-  S.users = Object.fromEntries(profs.map(p => [p.id, {name:p.full_name || 'Sin nombre', short:firstName(p.full_name)}]));
+  const profs = await q(sb.from('profiles').select('id,full_name,period_start_day'));
+  S.users = Object.fromEntries(profs.map(p => [p.id, {name:p.full_name || 'Sin nombre', short:firstName(p.full_name), sd:p.period_start_day}]));
 }
 async function loadAccounts(){
   S.accounts = (await q(sb.from('accounts').select('*').order('sort_order').order('created_at'))).map(mapAcc);
@@ -238,9 +242,27 @@ async function loadNotifs(){
   S.notifs = await q(sb.from('notifications').select('id,type,title,body,read_at,created_at').order('created_at', {ascending:false}).limit(100));
 }
 async function loadProfile(){ S.profile = await q(sb.from('profiles').select('*').eq('id', me()).single()); }
+async function loadSubscription(){
+  const rows = await q(sb.from('subscriptions').select('plan_id,status,source,started_at,current_period_end,plans(name)').eq('user_id', me()));
+  S.sub = rows[0] || null;
+}
+/* Plan efectivo: vencido o cancelado = Gratis */
+function planInfo(){
+  const s = S.sub;
+  if (!s) return {plan:'free', name:'Gratis', label:'Plan Gratis', suspended:false};
+  if (s.status === 'suspended') return {plan:'suspended', name:'Suspendida', label:'Cuenta suspendida', suspended:true};
+  const end = s.current_period_end ? s.current_period_end.slice(0, 10) : null;
+  const live = ['trialing','active'].includes(s.status) && (!s.current_period_end || new Date(s.current_period_end) > new Date());
+  if (!live || s.plan_id === 'free') return {plan:'free', name:'Gratis', label:'Plan Gratis', suspended:false};
+  const name = s.plans?.name || 'Kuenta Pro';
+  const left = end ? daysLeft(end) - 1 : null;
+  const detail = s.source === 'launch_promo' ? `Gratis por lanzamiento${end ? ` hasta el ${dShort(end)} ${end.slice(0, 4)}` : ''}`
+    : end ? `Vigente hasta el ${dShort(end)} ${end.slice(0, 4)}` : 'Sin vencimiento';
+  return {plan:s.plan_id, name, label:name, detail, left, suspended:false};
+}
 async function loadAll(){
   await loadProfile();
-  await Promise.all([loadFamily(), loadAccounts(), loadCategories(), loadBudgets(), loadGoals(), loadTx(), loadNotifs()]);
+  await Promise.all([loadSubscription(), loadFamily(), loadAccounts(), loadCategories(), loadBudgets(), loadGoals(), loadTx(), loadNotifs()]);
   S.loadedAt = Date.now();
 }
 /* Tras un cambio: refresca saldos y avisa las alertas nuevas que creó el servidor */
@@ -284,6 +306,7 @@ function render(){
   if (!CONFIGURED){ v.className = 'full'; v.innerHTML = vSetupConfig(); n.hidden = true; return; }
   if (!S.user){ v.className = 'full'; v.innerHTML = vAuth(); n.hidden = true; return; }
   if (!S.profile){ v.className = 'full'; v.innerHTML = vSplash(); n.hidden = true; return; }
+  if (planInfo().suspended){ v.className = 'full'; v.innerHTML = vSuspended(); n.hidden = true; return; }
   if (S.locked){ v.className = 'full'; v.innerHTML = vLock(); n.hidden = true; return; }
   if (S.needPinSetup){ v.className = 'full'; v.innerHTML = vPinSetup(); n.hidden = true; return; }
   v.className = '';
@@ -298,13 +321,16 @@ function render(){
 }
 const subhead = (title, extra = '') => `<div class="subhead"><button class="iconbtn" data-a="back" aria-label="Volver">${ic('back','sm')}</button><h1>${title}</h1>${extra}</div>`;
 const brand = `<div class="brand"><img class="logo" src="icons/logo-mark.png" alt="" width="52" height="52"><div class="word">Kuenta</div></div>`;
+const vSuspended = () => `<div class="lock">${brand}<div style="text-align:center;max-width:320px"><b style="font-size:17px">Tu cuenta está suspendida</b>
+  <p class="muted" style="font-size:14px">Por ahora no puedes usar Kuenta. Si crees que es un error, escríbenos${CFG.SUPPORT_EMAIL ? ` a <b style="user-select:all">${esc(CFG.SUPPORT_EMAIL)}</b>` : ''}.</p></div>
+  <button class="btn sm" data-a="signOut">Cerrar sesión</button></div>`;
 const vSplash = () => `<div class="lock">${brand}<div class="spin" role="status" aria-label="Cargando"></div></div>`;
 const vSetupConfig = () => `<div class="lock">${brand}<div class="note" style="max-width:340px">Falta conectar Supabase. Abre <b>config.js</b> y pega la URL de tu proyecto y la clave <b>anon</b>.</div></div>`;
 
 /* ============ autenticación ============ */
 function vAuth(){
   const m = S.authMsg ? `<div class="${S.authMsg.startsWith('!') ? 'err' : 'ok-msg'}" style="text-align:center">${esc(S.authMsg.replace(/^!/, ''))}</div>` : '';
-  const pending = sessionStorage.getItem('kuenta.invite') ? '<div class="note" style="max-width:340px">Te invitaron a una familia en Kuenta. Entra o crea tu cuenta para aceptar.</div>' : '';
+  const pending = pendingInvite() ? '<div class="note" style="max-width:340px">Te invitaron a una familia en Kuenta. Entra o crea tu cuenta para aceptar.</div>' : '';
   if (S.auth === 'signup') return `<div class="lock">${brand}<h1 style="font-size:20px">Crea tu cuenta</h1>${pending}
     <form class="form" data-f="signup" novalidate>
       <div class="field"><label for="su-n">Nombre completo</label><input class="inp" id="su-n" required maxlength="80" autocomplete="name"></div>
@@ -312,6 +338,7 @@ function vAuth(){
       <div class="field"><label for="su-p">Contraseña</label><input class="inp" id="su-p" type="password" required minlength="8" autocomplete="new-password" placeholder="Mínimo 8 caracteres, con letras y números"></div>
       <div class="field"><label for="su-p2">Repite la contraseña</label><input class="inp" id="su-p2" type="password" required autocomplete="new-password"></div>
       <div class="err" id="ferr"></div>${m}
+      <p class="muted" style="font-size:12.5px;margin:0;text-align:center">Al crear tu cuenta aceptas los <a class="link" href="terminos.html" target="_blank" rel="noopener">Términos de uso</a> y la <a class="link" href="privacidad.html" target="_blank" rel="noopener">Política de privacidad</a>.</p>
       <button class="btn" type="submit">Crear cuenta</button>
       <button type="button" class="textbtn" data-a="authMode" data-v="login">Ya tengo cuenta</button></form></div>`;
   if (S.auth === 'forgot') return `<div class="lock">${brand}<h1 style="font-size:20px">Recupera tu acceso</h1>
@@ -344,6 +371,12 @@ async function hashPin(pin, salt){
   const bits = await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt, iterations:150000}, key, 256);
   return b64(bits);
 }
+const INVITE_KEY = 'invite';
+function pendingInvite(){
+  const r = LS.get(INVITE_KEY);
+  if (!r || !r.token || Date.now() > r.exp){ LS.del(INVITE_KEY); return null; }
+  return r.token;
+}
 const pinRec = () => LS.get('pin.' + me());
 async function setPin(pin){ const salt = crypto.getRandomValues(new Uint8Array(16)); LS.set('pin.' + me(), {salt:b64(salt), hash:await hashPin(pin, salt)}); LS.set('tries.' + me(), 0); }
 async function checkPin(pin){ const r = pinRec(); return !!r && (await hashPin(pin, unb64(r.salt))) === r.hash; }
@@ -374,7 +407,8 @@ function vLock(){
       : k === 'del' ? `<button data-a="pin" data-v="del" aria-label="Borrar" style="font-size:16px">⌫</button>`
       : `<button data-a="pin" data-v="${k}">${k}</button>`).join('')}</div>
     ${bioRec() ? `<button class="finger" data-a="bio">${ic('finger')} Usar huella o Face ID</button>` : ''}
-    <button class="textbtn" data-a="signOut">Entrar con otra cuenta</button></div>`;
+    <button class="textbtn" data-a="forgotPin">Olvidé mi PIN</button>
+    <button class="textbtn" data-a="signOut" style="color:var(--muted)">Entrar con otra cuenta</button></div>`;
 }
 function vPinSetup(){
   const step = S.form.pinStep || 1;
@@ -570,14 +604,22 @@ function amountText(d){
 }
 function renderAdd(){
   const d = S.draft, accs = writableAccounts();
+  // Solo el dueño de la familia saca dinero de una cuenta compartida
+  const fromAccs = isOwner() ? accs : accs.filter(a => !a.shared);
   const seg = `<div class="seg" style="margin-bottom:12px">${[['expense','Gasto'],['income','Ingreso'],['transfer','Transferir']].map(([k, l]) =>
     `<button class="${d.type === k ? 'on' : ''}" data-a="dType" data-v="${k}">${l}</button>`).join('')}</div>`;
-  const accChips = (key, label) => `<div class="eyebrow" style="margin:12px 0 6px">${label}</div><div class="accsel">${accs.map(a =>
+  const accChips = (key, label) => `<div class="eyebrow" style="margin:12px 0 6px">${label}</div><div class="accsel">${(key === 'from' ? fromAccs : accs).map(a =>
     `<button class="${d[key] === a.id ? 'on' : ''}" data-a="dAcc" data-k="${key}" data-v="${a.id}"><span style="font-size:18px">${esc(a.icon)}</span><span>${esc(a.name)}<small class="num">${money(balance(a), a.cur)}</small></span></button>`).join('')}</div>`;
   const keypad = `<div class="keys">${['1','2','3','4','5','6','7','8','9','.','0','del'].map(k =>
     `<button data-a="key" data-v="${k}" ${k === 'del' ? 'aria-label="Borrar"' : ''}>${k === 'del' ? '⌫' : k}</button>`).join('')}</div>`;
   const amt = `<div class="amount"><span class="num" id="amt">${amountText(d)}</span></div>`;
   if (d.type === 'transfer'){
+    if (!fromAccs.length){
+      openSheet(`${sheetHead('Nuevo movimiento')}${seg}<div class="empty">Para transferir necesitas una cuenta personal. Solo el dueño de la familia puede sacar dinero de las cuentas compartidas.</div>`);
+      return;
+    }
+    if (!fromAccs.some(a => a.id === d.from)) d.from = fromAccs[0].id;
+    if (d.to === d.from) d.to = (accs.find(a => a.id !== d.from) || accs[0]).id;
     const fa = acc(d.from), ta = acc(d.to), diff = fa.cur !== ta.cur;
     openSheet(`${sheetHead('Nuevo movimiento')}${seg}${amt}${accChips('from','Desde')}${accChips('to','Hacia')}
       ${diff ? `<div class="field" style="margin-top:12px"><label for="toAmt">Monto que recibe ${esc(ta.name)} (${ta.cur})</label><input class="inp" id="toAmt" inputmode="decimal" placeholder="Monedas distintas: indica el monto recibido" value="${esc(d.toAmount)}" data-in="toAmount"></div>` : ''}
@@ -659,8 +701,8 @@ function donut(items){
   return `<svg viewBox="0 0 150 150" width="150" height="150" role="img" aria-label="Gastos por categoría"><circle cx="75" cy="75" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="20"/>${segs}</svg>`;
 }
 function trendChart(scope){
-  const cur = period(TODAY).start, data = [];
-  for (let i = 5; i >= 0; i--){ const s = addMonths(cur, -i), e = period(s).end; data.push({s, e, ...summary(s, e, scope)}); }
+  const sd = dayFor(scope), cur = period(TODAY, sd).start, data = [];
+  for (let i = 5; i >= 0; i--){ const s = addMonths(cur, -i), e = period(s, sd).end; data.push({s, e, ...summary(s, e, scope)}); }
   const max = Math.max(1, ...data.map(d => Math.max(d.inc, d.exp + d.gen)));
   const step = max > 60000 ? 20000 : max > 30000 ? 10000 : max > 12000 ? 5000 : max > 4000 ? 2000 : 1000, top = Math.ceil(max / step) * step;
   const W = 340, H = 180, L = 34, B = 24, T = 8, cw = (W - L - 6) / 6, y = v => T + (H - T - B) * (1 - v / top);
@@ -684,8 +726,9 @@ function ring(pct, color, label){
 const scopeSeg = (key, val) => hasFamily() ? `<div class="seg"><button type="button" class="${val === 'personal' ? 'on' : ''}" data-a="setScope" data-k="${key}" data-v="personal">Personal</button><button type="button" class="${val === 'family' ? 'on' : ''}" data-a="setScope" data-k="${key}" data-v="family">Familia</button></div>` : '';
 function vStats(){
   const u = S.ui; if (!hasFamily()) u.statsScope = 'personal';
-  const p = period(addMonths(period(TODAY).start, u.statsOff));
-  const sc = u.statsScope, sm = summary(p.start, p.end, sc), bd = breakdown(p.start, p.end, sc, 'expense');
+  const sc = u.statsScope, sd = dayFor(sc);
+  const p = period(addMonths(period(TODAY, sd).start, u.statsOff), sd);
+  const sm = summary(p.start, p.end, sc), bd = breakdown(p.start, p.end, sc, 'expense');
   const tithePct = sm.inc ? sm.gen / sm.inc * 100 : 0, goalPct = +S.profile.tithe_percent;
   let members = '';
   if (sc === 'family'){
@@ -723,7 +766,8 @@ function vMore(){
     ['alerts','bell','Alertas',`${S.notifs.filter(n => !n.read_at).length} sin leer`],['settings','gear','Ajustes','Seguridad y preferencias']];
   return `<div class="subhead"><h1>Más</h1></div>
   <div class="panel" style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div class="avatar">${esc(firstName(S.profile.full_name)[0])}</div>
-    <div style="flex:1;min-width:0"><b>${esc(S.profile.full_name || 'Sin nombre')}</b><div class="muted" style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis">${esc(S.user.email)}</div></div>${role() ? `<span class="pill brand">${ROLES[role()]}</span>` : ''}</div>
+    <div style="flex:1;min-width:0"><b>${esc(S.profile.full_name || 'Sin nombre')}</b><div class="muted" style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis">${esc(S.user.email)}</div></div>
+    <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><span class="pill ${planInfo().plan === 'pro' ? 'gold' : 'mute'}">${esc(planInfo().name)}</span>${role() ? `<span class="pill brand">${ROLES[role()]}</span>` : ''}</div></div>
   <div class="hub">${items.map(([k, i, t, s]) => `<button data-a="nav" data-v="${k}"><span class="hi">${ic(i,'sm')}</span><span style="min-width:0"><b>${t}</b><small>${esc(s)}</small></span></button>`).join('')}</div>
   ${pinRec() ? `<button class="btn ghost" style="margin-top:16px" data-a="lockNow">${ic('lock','sm')} Bloquear ahora</button>` : ''}`;
 }
@@ -768,7 +812,7 @@ function vBudgets(){
   const sc = hasFamily() ? S.ui.budScope : 'personal';
   const list = S.budgets.filter(b => cat(b.cat).scope === (sc === 'family' ? 'f' : 'p'));
   const tot = list.reduce((s, b) => s + b.amount, 0), spent = list.reduce((s, b) => s + budgetInfo(b).spent, 0);
-  const p = period();
+  const p = period(TODAY, dayFor(sc));
   return `${subhead('Presupuestos', canEditScope(sc === 'family' ? 'f' : 'p') ? `<button class="btn sm" data-a="newBudget">${ic('plus','sm')} Nuevo</button>` : '')}
   ${scopeSeg('budScope', sc)}<div style="height:14px"></div>
   <div class="panel" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="eyebrow">Total del mes</span><span class="muted" style="font-size:12px">${daysLeft(p.end)} días restantes</span></div>
@@ -896,7 +940,7 @@ function repTx(){
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 function vReports(){
-  const u = S.ui, p = period();
+  const u = S.ui, p = period(TODAY, dayFor(u.repScope));
   if (!u.repFrom){ u.repFrom = p.start; u.repTo = p.end; }
   if (!hasFamily()) u.repScope = 'personal';
   const sc = u.repScope, valid = u.repFrom && u.repTo && u.repFrom <= u.repTo;
@@ -986,7 +1030,12 @@ function vAlerts(){
 /* ---- ajustes ---- */
 function vSettings(){
   const pr = S.profile, p = period(), theme = LS.get('theme', 'system');
+  const pl = planInfo();
   return `${subhead('Ajustes')}
+  <div class="panel" style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+    <span class="tile" style="background:var(--gold-soft);color:var(--gold)">★</span>
+    <div style="flex:1;min-width:0"><div class="eyebrow">Tu plan</div><b style="font-size:16px">${esc(pl.name)}</b>
+      <div class="muted" style="font-size:12.5px">${esc(pl.detail || 'Funciones esenciales de Kuenta')}${pl.left != null && pl.left >= 0 ? ` · quedan ${pl.left} ${pl.left === 1 ? 'día' : 'días'}` : ''}</div></div></div>
   <div class="panel"><div class="eyebrow" style="margin-bottom:6px">Perfil</div>
     <form class="form" data-f="profile" novalidate style="padding-block:6px"><div class="field"><label for="pf-n">Tu nombre</label><div style="display:flex;gap:8px"><input class="inp" id="pf-n" maxlength="80" value="${esc(pr.full_name)}"><button class="btn sm" type="submit">Guardar</button></div></div></form>
   </div>
@@ -1007,7 +1056,48 @@ function vSettings(){
     <div class="seg">${[['system','Sistema'],['light','Claro'],['dark','Oscuro']].map(([k, l]) => `<button class="${theme === k ? 'on' : ''}" data-a="theme" data-v="${k}">${l}</button>`).join('')}</div></div>
   <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
     ${pinRec() ? `<button class="btn ghost" data-a="lockNow">${ic('lock','sm')} Bloquear ahora</button>` : ''}
-    <button class="btn danger" data-a="signOut">${ic('logout','sm')} Cerrar sesión</button></div>`;
+    <button class="btn danger" data-a="signOut">${ic('logout','sm')} Cerrar sesión</button></div>
+  <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:6px">Legal</div>
+    <div class="toggle"><div class="t"><b>Términos de uso</b></div><a class="link" href="terminos.html" target="_blank" rel="noopener">Abrir</a></div>
+    <div class="toggle"><div class="t"><b>Política de privacidad</b></div><a class="link" href="privacidad.html" target="_blank" rel="noopener">Abrir</a></div>
+  </div>
+  <button class="textbtn" style="color:var(--neg);margin:18px auto 4px;display:block" data-a="deleteAccount">Eliminar mi cuenta</button>`;
+}
+function deleteSheet(){
+  const others = S.family ? Object.keys(S.family.members).filter(id => id !== me()) : [];
+  let fam = '';
+  if (isOwner() && others.length){
+    fam = `<div class="field"><label>¿Qué pasa con ${esc(S.family.name)}?</label>
+      <label class="toggle" style="justify-content:flex-start;gap:10px"><input type="radio" name="fa" value="transfer" checked> <span>Trasladarla a otro miembro</span></label>
+      <select class="inp" id="del-owner" aria-label="Nuevo dueño">${others.map(id => `<option value="${id}">${esc(uname(id))} · ${ROLES[S.family.members[id]]}</option>`).join('')}</select>
+      <label class="toggle" style="justify-content:flex-start;gap:10px"><input type="radio" name="fa" value="delete"> <span>Eliminarla para todos: se borran sus cuentas compartidas, movimientos, presupuestos y metas</span></label></div>`;
+  } else if (isOwner()){
+    fam = `<div class="note">Tu familia ${esc(S.family.name)} también se eliminará, porque no tiene otros miembros.</div>`;
+  } else if (S.family){
+    fam = `<div class="note">Saldrás de ${esc(S.family.name)}. Lo que registraste en sus cuentas compartidas se conserva, sin tu nombre.</div>`;
+  }
+  openSheet(`${sheetHead('Eliminar mi cuenta')}<form class="form" data-f="deleteAccount" novalidate>
+    <div class="note" style="background:var(--neg-soft);color:var(--neg)">Se borrarán para siempre tu perfil, tus cuentas personales, movimientos, presupuestos, metas, categorías y comprobantes. No se puede deshacer.</div>
+    ${fam}
+    <div class="field"><label for="del-confirm">Escribe ELIMINAR para confirmar</label><input class="inp" id="del-confirm" autocomplete="off" autocapitalize="characters"></div>
+    <div class="err" id="ferr"></div>
+    <button class="btn danger" type="submit">Eliminar mi cuenta para siempre</button></form>`);
+}
+/* Borra los comprobantes propios; conserva los de cuentas compartidas si la familia sigue */
+async function deleteMyFiles(keepShared){
+  const st = sb.storage.from(BUCKET), uid = me(), keep = new Set();
+  if (keepShared){
+    const rows = await fetchAll(() => sb.from('attachments').select('storage_path,transactions(account_id)').eq('uploaded_by', uid));
+    rows.forEach(r => { if (acc(r.transactions?.account_id)?.shared) keep.add(r.storage_path); });
+  }
+  const folders = await q(st.list(uid, {limit:1000}));
+  const paths = [];
+  for (const f of folders){
+    const files = await q(st.list(`${uid}/${f.name}`, {limit:1000}));
+    files.forEach(x => paths.push(`${uid}/${f.name}/${x.name}`));
+  }
+  const del = paths.filter(p => !keep.has(p));
+  for (let i = 0; i < del.length; i += 100) await q(st.remove(del.slice(i, i + 100)));
 }
 function pinSheet(){
   S.form = {np:'', np1:''};
@@ -1037,6 +1127,11 @@ const A = {
   closeSheet,
   authMode: el => { S.auth = el.dataset.v; S.authMsg = ''; render(); },
   signOut: async () => { await sb.auth.signOut(); },
+  forgotPin: async () => {
+    LS.del('pin.' + me()); LS.del('bio.' + me()); LS.set('tries.' + me(), 0);
+    S.authMsg = 'Entra con tu correo y contraseña para crear un PIN nuevo.';
+    await sb.auth.signOut();
+  },
   pin: async el => {
     const v = el.dataset.v;
     if (v === 'del') S.pinEntry = S.pinEntry.slice(0, -1); else if (S.pinEntry.length < 4) S.pinEntry += v;
@@ -1121,9 +1216,9 @@ const A = {
   doRemove: async el => { await q(sb.rpc('remove_family_member', {p_user:el.dataset.v})); await loadFamily(); render(); toast('Miembro quitado'); },
   askLeave: () => { $('#leavebox').innerHTML = `<div class="note" style="margin-bottom:8px">Dejarás de ver las cuentas compartidas. Tus cuentas personales no cambian.</div><div class="row2"><button class="btn ghost" data-a="nav" data-v="family">Cancelar</button><button class="btn danger" data-a="doLeave">Salir</button></div>`; },
   doLeave: async () => { await q(sb.rpc('leave_family')); await loadAll(); go('more'); toast('Saliste de la familia'); },
-  repPreset: el => { const p = period(), k = el.dataset.v, u = S.ui;
+  repPreset: el => { const u = S.ui, sd = dayFor(u.repScope), p = period(TODAY, sd), k = el.dataset.v;
     if (k === 'cur'){ u.repFrom = p.start; u.repTo = p.end; }
-    else if (k === 'prev'){ const pp = period(addMonths(p.start, -1)); u.repFrom = pp.start; u.repTo = pp.end; }
+    else if (k === 'prev'){ const pp = period(addMonths(p.start, -1), sd); u.repFrom = pp.start; u.repTo = pp.end; }
     else if (k === 'q'){ u.repFrom = addMonths(p.start, -2); u.repTo = p.end; }
     else { u.repFrom = TODAY.slice(0, 4) + '-01-01'; u.repTo = TODAY; } render(); },
   exportCsv, exportPdf,
@@ -1132,7 +1227,7 @@ const A = {
   readOne: async el => { const n = S.notifs.find(x => x.id === el.dataset.v); if (n.read_at) return; const now = new Date().toISOString();
     await q(sb.from('notifications').update({read_at:now}).eq('id', n.id)); n.read_at = now; render(); },
   theme: el => { LS.set('theme', el.dataset.v); applyTheme(); render(); },
-  changePin: pinSheet, changePass: passSheet,
+  changePin: pinSheet, changePass: passSheet, deleteAccount: deleteSheet,
   npin: async el => {
     const v = el.dataset.v, f = S.form;
     f.np = v === 'del' ? f.np.slice(0, -1) : (f.np + v).slice(0, 4);
@@ -1158,7 +1253,9 @@ const F = {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return (err.textContent = 'Escribe un correo válido.');
     if (!strongPass(p1)) return (err.textContent = 'La contraseña necesita al menos 8 caracteres, con letras y números.');
     if (p1 !== p2) return (err.textContent = 'Las contraseñas no coinciden.');
-    const data = await q(sb.auth.signUp({email, password:p1, options:{data:{full_name:name}, emailRedirectTo:location.origin + location.pathname}}));
+    const inv = pendingInvite();
+    const redirect = location.origin + location.pathname + (inv ? `?invite=${inv}` : '');
+    const data = await q(sb.auth.signUp({email, password:p1, options:{data:{full_name:name}, emailRedirectTo:redirect}}));
     if (!data.session){ S.auth = 'login'; S.authMsg = 'Te enviamos un correo para confirmar tu cuenta. Ábrelo y luego entra aquí.'; render(); }
   },
   forgot: async () => {
@@ -1173,6 +1270,24 @@ const F = {
     if (p1 !== p2) return (err.textContent = 'Las contraseñas no coinciden.');
     await q(sb.auth.updateUser({password:p1}));
     S.auth = 'login'; toast('Contraseña actualizada'); await boot(true);
+  },
+  deleteAccount: async () => {
+    const err = $('#ferr');
+    if ($('#del-confirm').value.trim().toUpperCase() !== 'ELIMINAR') return (err.textContent = 'Escribe ELIMINAR para confirmar.');
+    const others = S.family ? Object.keys(S.family.members).filter(id => id !== me()) : [];
+    let action = null, newOwner = null;
+    if (isOwner() && others.length){
+      action = document.querySelector('input[name=fa]:checked')?.value;
+      if (action === 'transfer') newOwner = $('#del-owner').value;
+      if (!action || (action === 'transfer' && !newOwner)) return (err.textContent = 'Elige qué pasa con tu familia.');
+    }
+    const uid = me(), familySurvives = !!S.family && (!isOwner() || action === 'transfer');
+    await deleteMyFiles(familySurvives);
+    await q(sb.rpc('delete_my_account', {p_family_action:action, p_new_owner:newOwner}));
+    ['pin.', 'bio.', 'tries.', 'lastAcc.'].forEach(k => LS.del(k + uid));
+    S.authMsg = 'Tu cuenta fue eliminada. Gracias por usar Kuenta.';
+    closeSheet();
+    await sb.auth.signOut({scope:'local'}).catch(() => {});
   },
   pass: async () => {
     const p1 = $('#pw-1').value, p2 = $('#pw-2').value, err = $('#ferr');
@@ -1313,8 +1428,8 @@ document.addEventListener('visibilitychange', async () => {
 
 /* ============ arranque ============ */
 async function acceptPendingInvite(){
-  const tok = sessionStorage.getItem('kuenta.invite'); if (!tok) return;
-  sessionStorage.removeItem('kuenta.invite');
+  const tok = pendingInvite(); if (!tok) return;
+  LS.del(INVITE_KEY);
   try { await q(sb.rpc('accept_family_invitation', {p_token:tok})); await loadAll(); toast('¡Te uniste a la familia!'); }
   catch (e) { toast(errMsg(e), 'over'); }
 }
@@ -1336,7 +1451,7 @@ A.retry = () => boot(false);
 function init(){
   applyTheme();
   const inv = new URLSearchParams(location.search).get('invite');
-  if (inv && /^[0-9a-f-]{36}$/i.test(inv)){ sessionStorage.setItem('kuenta.invite', inv); history.replaceState(null, '', location.pathname); }
+  if (inv && /^[0-9a-f-]{36}$/i.test(inv)){ LS.set(INVITE_KEY, {token:inv, exp:Date.now() + 7 * 864e5}); history.replaceState(null, '', location.pathname); }
   if (!CONFIGURED){ render(); return; }
   sb.auth.onAuthStateChange((event, session) => {
     setTimeout(() => {

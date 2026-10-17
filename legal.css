@@ -1,0 +1,26 @@
+/* Kuenta — páginas legales: documento de lectura, una columna */
+:root{
+  --bg:#F2F5F3; --surface:#FFFFFF; --fg:#0F1B2D; --muted:#5B6A70; --line:#D8E2DD; --brand:#0B7F5C; --brand-soft:#DCF1E7;
+  --f-display:'Sora', ui-sans-serif, system-ui, sans-serif;
+  --f-body:'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){ :root{
+  --bg:#0B1513; --surface:#12201C; --fg:#E8F1ED; --muted:#93A69F; --line:#25372F; --brand:#34D399; --brand-soft:#173A2F; color-scheme:dark }}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+main{max-width:720px;margin:0 auto;padding:calc(28px + env(safe-area-inset-top,0px)) 18px 64px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:28px}
+header img{width:44px;height:44px}
+header a{color:var(--fg);text-decoration:none;font-family:var(--f-display);font-weight:700;font-size:24px;letter-spacing:-.03em}
+h1{font-family:var(--f-display);font-size:30px;line-height:1.2;letter-spacing:-.02em;margin:0 0 6px;text-wrap:balance}
+h2{font-family:var(--f-display);font-size:19px;letter-spacing:-.01em;margin:32px 0 8px;text-wrap:balance}
+p,li{max-width:65ch}
+ul{padding-left:22px}
+li{margin:4px 0}
+a{color:var(--brand)}
+.meta{color:var(--muted);font-size:14px;margin:0 0 20px}
+.lead{font-size:17.5px}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin:18px 0}
+.box b{display:block;margin-bottom:2px}
+footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:14px;display:flex;gap:16px;flex-wrap:wrap}
