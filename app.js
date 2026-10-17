@@ -243,8 +243,11 @@ async function loadNotifs(){
 }
 async function loadProfile(){ S.profile = await q(sb.from('profiles').select('*').eq('id', me()).single()); }
 async function loadSubscription(){
-  const rows = await q(sb.from('subscriptions').select('plan_id,status,source,started_at,current_period_end,plans(name)').eq('user_id', me()));
-  S.sub = rows[0] || null;
+  // Si la base aún no tiene suscripciones (antes de la migración 05), la app sigue funcionando
+  try {
+    const rows = await q(sb.from('subscriptions').select('plan_id,status,source,started_at,current_period_end,plans(name)').eq('user_id', me()));
+    S.sub = rows[0] || null;
+  } catch { S.sub = null; }
 }
 /* Plan efectivo: vencido o cancelado = Gratis */
 function planInfo(){
