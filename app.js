@@ -68,6 +68,7 @@ const P = {
   lock:'M6 11h12v10H6zM8 11V8a4 4 0 0 1 8 0v3',
   search:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4',
   users:'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2.5 21a6.5 6.5 0 0 1 13 0M16 3.6a4 4 0 0 1 0 7.3M18 14.5a6 6 0 0 1 3.5 6.5',
+  mail:'M4 6h16v12H4zM4 7l8 6 8-6',
   heart:'M19.5 12.6 12 20l-7.5-7.4A5 5 0 1 1 12 6a5 5 0 1 1 7.5 6.6z',
   target:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01',
   gauge:'M4 18a8 8 0 1 1 16 0M12 18l4-6',
@@ -417,6 +418,24 @@ function vAuthInner(){
       <p class="muted" style="font-size:12.5px;margin:0;text-align:center">Al crear tu cuenta aceptas los <a class="link" href="terminos.html" target="_blank" rel="noopener">Términos de uso</a> y la <a class="link" href="privacidad.html" target="_blank" rel="noopener">Política de privacidad</a>.</p>
       <button class="btn" type="submit">Crear cuenta</button>
       <button type="button" class="textbtn" data-a="authMode" data-v="login">Ya tengo cuenta</button></form></div>`;
+  if (S.auth === 'verify'){
+    const em = S.verifyEmail || '', gmail = /@gmail\.com$/i.test(em);
+    return `<div class="lock">${brand}<div class="verify">
+      <div class="vi">${ic('mail')}</div>
+      <h1 style="font-size:21px;text-align:center">Revisa tu correo</h1>
+      <p class="muted" style="margin:0;text-align:center">Te enviamos un enlace para confirmar tu cuenta a<br><b style="color:var(--fg);word-break:break-all">${esc(em)}</b></p>
+      <div class="vsteps">
+        <div class="vs"><span>1</span><div><b>Busca un correo de "Kuenta"</b><small>Lo envía ${esc(CFG.SUPPORT_EMAIL || 'Kuenta')}. Puede tardar hasta 5 minutos.</small></div></div>
+        <div class="vs"><span>2</span><div><b>Si no está en la bandeja principal</b><small>Revisa <b>Spam</b> o <b>Correo no deseado</b>${gmail ? ', y las pestañas <b>Promociones</b> y <b>Social</b> de Gmail' : ''}. Si está ahí, márcalo como "No es spam".</small></div></div>
+        <div class="vs"><span>3</span><div><b>Toca "Confirmar mi cuenta"</b><small>Se abrirá Kuenta y podrás entrar con tu correo y contraseña.</small></div></div>
+      </div>
+      ${m}
+      ${gmail ? '<a class="btn" href="https://mail.google.com/mail/u/0/#search/in%3Aanywhere+from%3Akuenta" target="_blank" rel="noopener">Abrir Gmail</a>' : ''}
+      <button type="button" class="btn ghost" data-a="resendConfirm">¿No llegó? Reenviar correo</button>
+      <button type="button" class="textbtn" data-a="authMode" data-v="login">Ya confirmé, quiero entrar</button>
+      <button type="button" class="textbtn" style="color:var(--muted);font-size:13px" data-a="authMode" data-v="signup">Me equivoqué de correo</button>
+    </div></div>`;
+  }
   if (S.auth === 'forgot') return `<div class="lock">${brand}<h1 style="font-size:20px">Recupera tu acceso</h1>
     <form class="form" data-f="forgot" novalidate><p class="muted" style="margin:0;text-align:center">Te enviaremos un enlace para crear una contraseña nueva.</p>
       <div class="field"><label for="fg-e">Correo</label><input class="inp" id="fg-e" type="email" required autocomplete="email"></div>
@@ -1265,6 +1284,18 @@ const A = {
   back: () => go(S.ui.back || 'more'),
   closeSheet,
   authMode: el => { S.auth = el.dataset.v; S.authMsg = ''; render(); },
+  resendConfirm: async el => {
+    const left = Math.ceil(((S.resendAt || 0) + 60000 - Date.now()) / 1000);
+    if (left > 0){ S.authMsg = `!Espera ${left} segundos para reenviar.`; render(); return; }
+    const email = S.verifyEmail; if (!email) return;
+    el.dataset.busy = '1';
+    try {
+      const inv = pendingInvite();
+      await q(sb.auth.resend({type:'signup', email, options:{emailRedirectTo:location.origin + location.pathname + (inv ? `?invite=${inv}` : '')}}));
+      S.resendAt = Date.now(); S.authMsg = 'Listo, te enviamos otro correo. Revisa también Spam.';
+    } catch (e) { S.authMsg = '!' + errMsg(e); }
+    render();
+  },
   signOut: async () => { await sb.auth.signOut(); },
   forgotPin: async () => {
     LS.del('pin.' + me()); LS.del('bio.' + me()); LS.set('tries.' + me(), 0);
@@ -1394,7 +1425,11 @@ const F = {
     const email = $('#lg-e').value.trim(), password = $('#lg-p').value, err = $('#ferr');
     if (!email || !password) return (err.textContent = 'Escribe tu correo y contraseña.');
     S.authMsg = '';
-    await q(sb.auth.signInWithPassword({email, password}));
+    try { await q(sb.auth.signInWithPassword({email, password})); }
+    catch (e) {
+      if (/Email not confirmed/i.test(String(e?.message || ''))){ S.auth = 'verify'; S.verifyEmail = email; S.authMsg = '!Todavía no confirmas tu correo. Sigue estos pasos o reenvía el correo.'; render(); return; }
+      throw e;
+    }
   },
   signup: async () => {
     const name = $('#su-n').value.trim(), email = $('#su-e').value.trim(), p1 = $('#su-p').value, p2 = $('#su-p2').value, err = $('#ferr');
@@ -1405,7 +1440,7 @@ const F = {
     const inv = pendingInvite();
     const redirect = location.origin + location.pathname + (inv ? `?invite=${inv}` : '');
     const data = await q(sb.auth.signUp({email, password:p1, options:{data:{full_name:name}, emailRedirectTo:redirect}}));
-    if (!data.session){ S.auth = 'login'; S.authMsg = 'Te enviamos un correo para confirmar tu cuenta. Si no lo ves en unos minutos, revisa Spam o Promociones. Ábrelo y luego entra aquí.'; render(); }
+    if (!data.session){ S.auth = 'verify'; S.verifyEmail = email; S.authMsg = ''; render(); }
   },
   forgot: async () => {
     const email = $('#fg-e').value.trim();
