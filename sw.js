@@ -1,7 +1,7 @@
 // Kuenta — Service worker: guarda solo la "cáscara" de la app para abrir rápido.
 // Nunca guarda datos financieros ni respuestas de Supabase.
-const CACHE = 'kuenta-v2';
-const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.json', 'icons/logo-mark.png', 'icons/favicon-48.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'kuenta-v3';
+const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.json', 'icons/logo-mark.png', 'terminos.html', 'privacidad.html', 'legal.css', 'legal.js', 'icons/favicon-48.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -12,6 +12,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return; // Supabase y CDNs van directo a la red
+  if (url.search) return; // nunca guardar visitas con parámetros (p. ej. ?invite=)
   // Red primero (siempre la versión más nueva); si no hay internet, usa la copia guardada.
   e.respondWith(
     fetch(e.request).then(res => {
