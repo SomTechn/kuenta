@@ -68,6 +68,7 @@ const P = {
   lock:'M6 11h12v10H6zM8 11V8a4 4 0 0 1 8 0v3',
   search:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4',
   users:'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2.5 21a6.5 6.5 0 0 1 13 0M16 3.6a4 4 0 0 1 0 7.3M18 14.5a6 6 0 0 1 3.5 6.5',
+  heart:'M19.5 12.6 12 20l-7.5-7.4A5 5 0 1 1 12 6a5 5 0 1 1 7.5 6.6z',
   target:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01',
   gauge:'M4 18a8 8 0 1 1 16 0M12 18l4-6',
   tag:'M3 12V4h8l10 10-8 8zM7.5 7.5h.01',
@@ -456,6 +457,28 @@ function accCard(a){
     <div class="bal num">${money(b, a.cur)}</div>
     <div class="foot">${extra}<span>${a.type === 'tarjeta' ? 'Saldo de la tarjeta' : 'Saldo'}</span></div></button>`;
 }
+/* Resumen del mes: cifras grandes, centavos discretos y barra de reparto del ingreso */
+function bigMoney(n){
+  const [ent, dec] = nf.format(Math.abs(n)).split('.');
+  const size = ent.length > 9 ? 'xs' : ent.length > 7 ? 's' : '';
+  return `<b class="big ${size}">${n < 0 ? '−' : ''}<span class="cur">L</span>${ent}<span class="dec">.${dec}</span></b>`;
+}
+function monthCard(sm){
+  const base = Math.max(sm.inc, sm.exp + sm.gen, 1);
+  const w = v => Math.max(0, v / base * 100).toFixed(1);
+  const left = sm.inc - sm.exp - sm.gen;
+  return `<div class="month">
+    <div class="mgrid">
+      <div class="mt inc"><span class="mi">${ic('in','sm')}</span><small>Ingresos</small>${bigMoney(sm.inc)}</div>
+      <div class="mt exp"><span class="mi">${ic('out','sm')}</span><small>Gastos</small>${bigMoney(sm.exp)}</div>
+    </div>
+    <div class="mt gen wide"><span class="mi">${ic('heart','sm')}</span><div class="mtx"><small>Generosidad</small>${bigMoney(sm.gen)}</div>
+      <div class="mleft ${left < 0 ? 'neg' : ''}"><small>${left < 0 ? 'Te pasaste' : 'Te queda'}</small><b>${money(Math.abs(left))}</b></div></div>
+    ${sm.inc > 0 || sm.exp > 0 ? `<div class="mbar" role="img" aria-label="Del ingreso: gastos ${w(sm.exp)}%, generosidad ${w(sm.gen)}%">
+      <i class="e" style="width:${w(sm.exp)}%"></i><i class="g" style="width:${w(sm.gen)}%"></i><i class="l" style="width:${w(Math.max(left, 0))}%"></i></div>
+    <div class="mleg"><span><i class="e"></i>Gastos</span><span><i class="g"></i>Generosidad</span><span><i class="l"></i>Libre</span></div>` : ''}
+  </div>`;
+}
 function vHome(){
   const p = period(), accs = visAccounts();
   const sm = summary(p.start, p.end, 'personal');
@@ -483,7 +506,7 @@ function vHome(){
     <button data-a="tab" data-v="more"><span class="q">${ic('grid')}</span>Más</button>
   </div>
   <div class="section"><div class="sec-h"><h2>Este mes</h2><button class="link" data-a="tab" data-v="stats">Estadísticas</button></div>
-    <div class="stats3"><div class="stat inc"><small>Ingresos</small><b>${money(sm.inc)}</b></div><div class="stat"><small>Gastos</small><b>${money(sm.exp)}</b></div><div class="stat gen"><small>Generosidad</small><b>${money(sm.gen)}</b></div></div></div>
+    ${monthCard(sm)}</div>
   ${buds.length ? `<div class="section"><div class="sec-h"><h2>Presupuestos</h2><button class="link" data-a="nav" data-v="budgets">Ver todos</button></div>
     <div class="list">${buds.map(budRow).join('')}</div></div>` : ''}
   <div class="section"><div class="sec-h"><h2>Movimientos recientes</h2>${recent.length ? '<button class="link" data-a="tab" data-v="tx">Ver todos</button>' : ''}</div>
