@@ -84,9 +84,79 @@ const P = {
 };
 const ic = (n, cls = '') => `<span class="ic ${cls}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="${P[n]}"/></svg></span>`;
 
-const EMOJIS = ['🛒','🍽️','⛽','🚌','🏠','💡','📱','🩺','📚','👕','🎬','💳','💈','🐾','📦','☕','🎮','✈️','🏋️','🎁','💼','📈','🙏','💝'];
+const EMOJI_GROUPS = [
+  ['Comida', '🛒 🍽️ ☕ 🍔 🍕 🌮 🍗 🥖 🍰 🍺 🥤 🍎 🥩 🧃'],
+  ['Transporte', '⛽ 🚌 🚕 🚗 🏍️ 🛵 🚲 🅿️ 🔧 ✈️ 🚢'],
+  ['Hogar', '🏠 💡 💧 🔥 📶 📺 🛋️ 🧹 🧺 🔨 🪴 🔑'],
+  ['Salud y cuidado', '🩺 💊 🦷 👓 🏋️ 💈 💅 🧴 🧘'],
+  ['Familia y estudios', '👶 🧒 🎒 📚 🎓 🐾 🐶 🐱 👵 💍'],
+  ['Diversión', '🎬 🎮 🎵 🎉 🏖️ ⚽ 📖 🎨 🎤 🎟️'],
+  ['Compras', '👕 👟 👜 📱 💻 🎁 📦 🛍️ ⌚'],
+  ['Dinero y trabajo', '💼 💵 💰 💳 🏦 📈 📉 🧾 🪙 🤝 🏪 🛠️'],
+  ['Generosidad', '🙏 💝 ⛪ 🤲 ❤️ 🕊️ 🌱'],
+  ['Otros', '📌 ⭐ 🔔 📅 🧩 🏷️ ❓']
+].map(([t, l]) => [t, l.split(' ')]);
+const EMOJIS = EMOJI_GROUPS.flatMap(g => g[1]);
 const GOAL_EMOJIS = ['🎯','🛟','🏝️','🚗','🏠','🎓','💍','💻','✈️','🏥','👶','🐷','📱','🎸','🏍️','⛪'];
-const COLORS = ['#0B7F5C','#0A5C4F','#0F1B2D','#E8A21C','#EA580C','#DC2626','#DB2777','#7C3AED','#0EA5E9','#64748B'];
+const COLORS = ['#0B7F5C','#13A26F','#22C55E','#84CC16','#0A5C4F','#0D9488','#06B6D4','#0EA5E9','#2563EB','#1E3A8A',
+  '#4F46E5','#7C3AED','#9333EA','#C026D3','#DB2777','#E11D48','#DC2626','#EA580C','#F97316','#E8A21C',
+  '#EAB308','#A16207','#78350F','#57534E','#64748B','#334155','#0F1B2D','#000000'];
+/* Bancos de Honduras. El color es el principal de cada marca (aproximado); el usuario lo puede cambiar. */
+const BANKS = [
+  {id:'atlantida', n:'Banco Atlántida', s:'Atlántida', c:'#003DA5'},
+  {id:'bac', n:'BAC Credomatic', s:'BAC', c:'#E30613'},
+  {id:'ficohsa', n:'Banco Ficohsa', s:'Ficohsa', c:'#003C7E'},
+  {id:'banpais', n:'Banpaís (Banco del País)', s:'Banpaís', c:'#00529B'},
+  {id:'occidente', n:'Banco de Occidente', s:'Occidente', c:'#007A3D'},
+  {id:'davivienda', n:'Davivienda', s:'Davivienda', c:'#ED1C24'},
+  {id:'lafise', n:'Banco Lafise', s:'Lafise', c:'#00704A'},
+  {id:'promerica', n:'Banco Promerica', s:'Promerica', c:'#00A651'},
+  {id:'banrural', n:'Banrural Honduras', s:'Banrural', c:'#00843D'},
+  {id:'azteca', n:'Banco Azteca', s:'Azteca', c:'#2E9E45'},
+  {id:'trabajadores', n:'Banco de los Trabajadores', s:'Bantrab', c:'#1F4E9A'},
+  {id:'ficensa', n:'Banco Ficensa', s:'Ficensa', c:'#004A8F'},
+  {id:'banhcafe', n:'Banhcafé', s:'Banhcafé', c:'#6B3E26'},
+  {id:'popular', n:'Banco Popular', s:'Banco Popular', c:'#F28C00'},
+  {id:'bancohonduras', n:'Banco de Honduras', s:'Banco de Honduras', c:'#0B4EA2'},
+  {id:'banadesa', n:'Banadesa', s:'Banadesa', c:'#2E7D32'},
+  {id:'tigomoney', n:'Tigo Money', s:'Tigo Money', c:'#00377B'}
+];
+const BANK_TYPES = ['banco','tarjeta','ahorro','billetera','inversion'];
+const bankName = (b, type) => type === 'tarjeta' ? `Tarjeta ${b.s}` : type === 'ahorro' ? `Ahorro ${b.s}` : b.n;
+const guessBank = a => a.name ? BANKS.find(b => a.name.toLowerCase().includes(b.s.toLowerCase())) || null : null;
+/* Selector de color: paleta + color personalizado */
+const isHex = v => /^#[0-9A-Fa-f]{6}$/.test(v || '');
+function colorPicker(sel, disabled = false){
+  const custom = isHex(sel) && !COLORS.includes(sel.toUpperCase()) && !COLORS.includes(sel);
+  return `<div class="swatches">${COLORS.map(c => `<button type="button" class="${sel === c ? 'on' : ''}" style="background:${c}" data-a="pickColor" data-v="${c}" aria-label="Color ${c}" ${disabled ? 'disabled' : ''}></button>`).join('')}
+    <label class="swc ${custom ? 'on' : ''}" style="${custom ? `background:${sel}` : ''}" title="Elegir otro color"><input type="color" value="${isHex(sel) ? sel : '#0B7F5C'}" data-in="color" aria-label="Elegir otro color" ${disabled ? 'disabled' : ''}><span aria-hidden="true">+</span></label></div>`;
+}
+function setColor(c, root){
+  S.form.color = c;
+  const box = root || $('#sheet .swatches'); if (!box) return;
+  let hit = false;
+  box.querySelectorAll('button').forEach(b => { const on = b.dataset.v.toLowerCase() === c.toLowerCase(); b.classList.toggle('on', on); hit ||= on; });
+  const sw = box.querySelector('.swc'); sw.classList.toggle('on', !hit); sw.style.background = hit ? '' : c; sw.querySelector('input').value = c;
+  updAccPreview();
+}
+function updAccPreview(){
+  const pv = $('#accprev'); if (!pv) return;
+  const type = $('#ac-t')?.value || 'banco', b = BANKS.find(x => x.id === $('#ac-b')?.value);
+  pv.style.setProperty('--c', S.form.color);
+  pv.querySelector('.ai').textContent = TYPE_ICON[type];
+  pv.querySelector('b').textContent = $('#ac-n').value.trim() || 'Nombre de la cuenta';
+  pv.querySelector('small').textContent = [b ? b.s : null, TYPES[type]].filter(Boolean).join(' · ');
+}
+function pickBank(id){
+  const b = BANKS.find(x => x.id === id), n = $('#ac-n');
+  S.form.bank = id;
+  if (b){
+    setColor(b.c);
+    const auto = bankName(b, $('#ac-t').value);
+    if (!n.value.trim() || n.value === S.form.autoName){ n.value = auto; S.form.autoName = auto; }
+  }
+  updAccPreview();
+}
 const TYPES = {efectivo:'Efectivo',banco:'Banco',tarjeta:'Tarjeta de crédito',ahorro:'Ahorro',billetera:'Billetera digital',inversion:'Inversión',otro:'Otro'};
 const TYPE_ICON = {efectivo:'💵',banco:'🏦',tarjeta:'💳',ahorro:'🐷',billetera:'📲',inversion:'📈',otro:'👛'};
 const ROLES = {owner:'Dueño', member:'Miembro', viewer:'Solo lectura'};
@@ -817,15 +887,19 @@ function accSheet(id){
   const a = id ? acc(id) : {name:'', type:'banco', cur:S.profile.default_currency || 'HNL', init:0, limit:null, color:COLORS[0], icon:'🏦', shared:false, owner:me(), archived:false};
   const editable = !id || (a.shared ? isOwner() : a.owner === me());
   const hasTx = id && S.tx.some(t => t.acc === id);
-  S.form = {color:a.color};
+  const gb = guessBank(a);
+  S.form = {color:a.color, bank:gb ? gb.id : '', autoName:''};
   openSheet(`${sheetHead(id ? 'Editar cuenta' : 'Nueva cuenta')}
     <form class="form" data-f="acc" data-id="${id || ''}" novalidate>
-      <div class="field"><label for="ac-n">Nombre</label><input class="inp" id="ac-n" required maxlength="50" value="${esc(a.name)}" placeholder="Ej: Banpaís Ahorro" ${editable ? '' : 'disabled'}></div>
-      <div class="row2"><div class="field"><label for="ac-t">Tipo</label><select class="inp" id="ac-t" ${editable ? '' : 'disabled'}>${Object.entries(TYPES).map(([k, l]) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="accprev" id="accprev" style="--c:${a.color}"><span class="ai">${esc(TYPE_ICON[a.type] || a.icon)}</span><div><b>${esc(a.name || 'Nombre de la cuenta')}</b><small>${[gb ? gb.s : null, TYPES[a.type]].filter(Boolean).join(' · ')}</small></div></div>
+      <div class="row2"><div class="field"><label for="ac-t">Tipo</label><select class="inp" id="ac-t" data-in="acctype" ${editable ? '' : 'disabled'}>${Object.entries(TYPES).map(([k, l]) => `<option value="${k}" ${a.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div class="field"><label for="ac-c">Moneda</label><select class="inp" id="ac-c" ${hasTx || !editable ? 'disabled' : ''}><option value="HNL" ${a.cur === 'HNL' ? 'selected' : ''}>Lempiras (L)</option><option value="USD" ${a.cur === 'USD' ? 'selected' : ''}>Dólares ($)</option></select></div></div>
+      <div class="field" id="bankf" ${BANK_TYPES.includes(a.type) ? '' : 'hidden'}><label for="ac-b">Banco o billetera</label><select class="inp" id="ac-b" data-in="bank" ${editable ? '' : 'disabled'}>
+        <option value="">Otro / ninguno</option>${BANKS.map(b => `<option value="${b.id}" ${gb && gb.id === b.id ? 'selected' : ''}>${esc(b.n)}</option>`).join('')}</select></div>
+      <div class="field"><label for="ac-n">Nombre</label><input class="inp" id="ac-n" data-in="accName" required maxlength="50" value="${esc(a.name)}" placeholder="Ej: Ahorro Banpaís" ${editable ? '' : 'disabled'}></div>
       <div class="row2"><div class="field"><label for="ac-i">Saldo inicial</label><input class="inp" id="ac-i" inputmode="decimal" value="${a.init}" ${editable ? '' : 'disabled'}></div>
       <div class="field"><label for="ac-l">Límite (tarjetas)</label><input class="inp" id="ac-l" inputmode="decimal" value="${a.limit ?? ''}" placeholder="Opcional" ${editable ? '' : 'disabled'}></div></div>
-      <div class="field"><label>Color</label><div class="swatches">${COLORS.map(c => `<button type="button" class="${a.color === c ? 'on' : ''}" style="background:${c}" data-a="pickColor" data-v="${c}" aria-label="Color ${c}" ${editable ? '' : 'disabled'}></button>`).join('')}</div></div>
+      <div class="field"><label>Color${gb || BANK_TYPES.includes(a.type) ? ' <span class="muted" style="font-weight:600">· al elegir un banco se usa su color</span>' : ''}</label>${colorPicker(a.color, !editable)}</div>
       ${!id ? `<div class="toggle"><div class="t"><b>Compartida con la familia</b><small>${!hasFamily() ? 'Crea una familia en Más → Familia para compartir cuentas.' : isOwner() ? 'Los miembros podrán verla y registrar movimientos.' : 'Solo el dueño de la familia puede crear cuentas compartidas.'}</small></div>
         <label class="sw"><input type="checkbox" id="ac-s" ${isOwner() ? '' : 'disabled'}><span></span></label></div>` : ''}
       <div class="note">Para tarjetas de crédito, registra las compras como gastos: el saldo quedará en negativo y verás cuánto debes.</div>
@@ -953,8 +1027,9 @@ function catSheet(id){
       <div class="field"><label for="ca-n">Nombre</label><input class="inp" id="ca-n" required maxlength="40" value="${esc(c.name)}" placeholder="Ej: Gimnasio"></div>
       <div class="row2"><div class="field"><label for="ca-k">Tipo</label><select class="inp" id="ca-k" ${id ? 'disabled' : ''}>${Object.entries(KIND).map(([k, l]) => `<option value="${k}" ${c.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div class="field"><label for="ca-p">Dentro de</label><select class="inp" id="ca-p"><option value="">Ninguna (principal)</option>${parents.map(x => `<option value="${x.id}" ${c.parent === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div></div>
-      <div class="field"><label>Ícono</label><div class="emojis">${EMOJIS.map(e => `<button type="button" class="${c.icon === e ? 'on' : ''}" data-a="pickIcon" data-v="${e}">${e}</button>`).join('')}</div></div>
-      <div class="field"><label>Color</label><div class="swatches">${COLORS.map(x => `<button type="button" class="${c.color === x ? 'on' : ''}" style="background:${x}" data-a="pickColor" data-v="${x}" aria-label="Color ${x}"></button>`).join('')}</div></div>
+      <div class="field"><label>Ícono</label><div class="emopick">${EMOJI_GROUPS.map(([t, l]) => `<div class="eg"><small>${t}</small><div class="emojis">${l.map(e => `<button type="button" class="${c.icon === e ? 'on' : ''}" data-a="pickIcon" data-v="${e}" aria-label="Ícono ${e}">${e}</button>`).join('')}</div></div>`).join('')}</div>
+        <div class="emocustom"><span class="emoprev" id="emoprev">${esc(c.icon)}</span><input class="inp" id="ca-e" data-in="emoji" maxlength="8" placeholder="¿No está? Escribe o pega cualquier emoji" value="${EMOJIS.includes(c.icon) ? '' : esc(c.icon)}" autocomplete="off"></div></div>
+      <div class="field"><label>Color</label>${colorPicker(c.color)}</div>
       <div class="err" id="ferr"></div>
       <button class="btn" type="submit">Guardar</button>
       ${id ? `<button type="button" class="btn danger" data-a="delCat" data-v="${id}">${used ? (c.archived ? 'Restaurar' : 'Archivar (está en uso)') : 'Eliminar'}</button>` : ''}
@@ -1227,8 +1302,9 @@ const A = {
   archiveGoal: async el => { await q(sb.from('goals').update({status:'archived'}).eq('id', el.dataset.v)); S.goals = S.goals.filter(g => g.id !== el.dataset.v); render(); toast('Meta archivada'); },
   newAcc: () => accSheet(null), editAcc: el => accSheet(el.dataset.v),
   archiveAcc: async el => { const a = acc(el.dataset.v); await q(sb.from('accounts').update({is_archived:!a.archived}).eq('id', a.id)); a.archived = !a.archived; closeSheet(); render(); toast(a.archived ? 'Cuenta archivada' : 'Cuenta restaurada'); },
-  pickColor: el => { S.form.color = el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); },
-  pickIcon: el => { S.form.icon = el.dataset.v; el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); },
+  pickColor: el => setColor(el.dataset.v, el.parentElement),
+  pickIcon: el => { S.form.icon = el.dataset.v; el.closest('.emopick, .emojis').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el));
+    const pv = $('#emoprev'); if (pv) pv.textContent = el.dataset.v; const ce = $('#ca-e'); if (ce) ce.value = ''; },
   catScope: el => { S.ui.catScope = el.dataset.v; render(); },
   catKind: el => { S.ui.catKind = el.dataset.v; render(); },
   newCat: () => catSheet(null), editCat: el => catSheet(el.dataset.v),
@@ -1418,6 +1494,14 @@ document.addEventListener('input', e => {
   const el = e.target, k = el.dataset.in; if (!k) return;
   if (k === 'txQuery'){ S.ui.txQuery = el.value; const pos = el.selectionStart; render(); const qi = $('#q'); qi.focus(); qi.setSelectionRange(pos, pos); }
   else if (['date','desc','note','toAmount'].includes(k) && S.draft) S.draft[k] = el.value;
+  else if (k === 'color' && isHex(el.value)) setColor(el.value, el.closest('.swatches'));
+  else if (k === 'accName'){ if (el.value !== S.form.autoName) S.form.autoName = ''; updAccPreview(); }
+  else if (k === 'emoji'){
+    const v = el.value.trim();
+    if (v && /\p{Extended_Pictographic}/u.test(v) && !/[A-Za-z0-9]/.test(v)){
+      S.form.icon = v; $('#emoprev').textContent = v; document.querySelectorAll('.emopick button.on').forEach(b => b.classList.remove('on'));
+    }
+  }
 });
 document.addEventListener('change', e => {
   const el = e.target, k = el.dataset.in;
@@ -1442,6 +1526,13 @@ document.addEventListener('change', e => {
   } else if (k === 'role'){
     guarded(el, async () => { await q(sb.rpc('change_member_role', {p_user:el.dataset.id, p_role:el.value})); await loadFamily(); render(); toast('Rol actualizado'); });
   } else if (k === 'repFrom' || k === 'repTo'){ S.ui[k] = el.value; render(); }
+  else if (k === 'bank') pickBank(el.value);
+  else if (k === 'acctype'){
+    const bf = $('#bankf'); if (bf) bf.hidden = !BANK_TYPES.includes(el.value);
+    const b = BANKS.find(x => x.id === $('#ac-b')?.value), n = $('#ac-n');
+    if (b && (!n.value.trim() || n.value === S.form.autoName)){ n.value = S.form.autoName = bankName(b, el.value); }
+    updAccPreview();
+  }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
 

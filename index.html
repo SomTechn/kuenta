@@ -178,9 +178,23 @@ h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:
 .sw input:checked+span{background:var(--brand);border-color:var(--brand)}
 .sw input:checked+span::after{left:21px}
 .sw input:disabled+span{opacity:.45}
-.swatches{display:flex;flex-wrap:wrap;gap:8px}
-.swatches button{width:30px;height:30px;border-radius:10px;border:2px solid transparent}
-.swatches button.on{border-color:var(--fg);box-shadow:inset 0 0 0 2px var(--surface)}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(32px,1fr));gap:8px}
+.swatches button,.swc{width:100%;aspect-ratio:1;border-radius:10px;border:2px solid transparent}
+.swatches button.on,.swc.on{border-color:var(--fg);box-shadow:inset 0 0 0 2px var(--surface)}
+.swc{position:relative;display:grid;place-items:center;cursor:pointer;background:conic-gradient(#E11D48,#F97316,#EAB308,#22C55E,#06B6D4,#2563EB,#9333EA,#E11D48)}
+.swc span{width:60%;aspect-ratio:1;border-radius:50%;background:var(--surface);color:var(--fg);display:grid;place-items:center;font-weight:800;font-size:14px;line-height:1}
+.swc.on span{display:none}
+.swc input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;border:0;padding:0}
+.emopick{max-height:248px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.eg small{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 6px 2px}
+.emocustom{display:flex;align-items:center;gap:10px;margin-top:8px}
+.emoprev{width:44px;height:44px;flex:none;border-radius:13px;display:grid;place-items:center;font-size:22px;background:var(--brand-soft)}
+.accprev{--c:#0B7F5C;display:flex;align-items:center;gap:12px;padding:16px;border-radius:20px;color:#fff;background:linear-gradient(135deg,var(--c),color-mix(in srgb,var(--c) 55%,#000));box-shadow:0 14px 28px -16px var(--c);position:relative;overflow:hidden;transition:background .25s}
+.accprev::after{content:"";position:absolute;right:-30px;top:-40px;width:130px;height:130px;border-radius:50%;border:20px solid rgba(255,255,255,.08)}
+.accprev .ai{width:42px;height:42px;border-radius:13px;background:rgba(255,255,255,.18);display:grid;place-items:center;font-size:21px;flex:none}
+.accprev b{display:block;font-family:var(--f-display);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.accprev small{opacity:.85;font-size:12.5px}
+.accprev div{min-width:0}
 .emojis{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
 .emojis button{aspect-ratio:1;border-radius:10px;font-size:19px;background:var(--surface-2)}
 .emojis button.on{background:var(--brand-soft);box-shadow:inset 0 0 0 2px var(--brand)}
