@@ -533,6 +533,39 @@ function bigMoney(n){
   const size = ent.length > 9 ? 'xs' : ent.length > 7 ? 's' : '';
   return `<b class="big ${size}">${n < 0 ? '−' : ''}<span class="cur">L</span>${ent}<span class="dec">.${dec}</span></b>`;
 }
+/* Diezmo pendiente del mes financiero.
+   Base: ingresos de cuentas personales en lempiras. No cuentan las transferencias
+   (entre cuentas propias o con la familia) ni los aportes que entran a cuentas compartidas.
+   Pagado: movimientos en una categoría "Diezmo" (personal, o familiar registrada por ti). */
+const isTitheCat = c => c && c.kind === 'generosity' && /diezmo/i.test(c.name);
+function titheInfo(p){
+  const pct = +S.profile.tithe_percent || 0;
+  let base = 0, paid = 0;
+  for (const t of S.tx){
+    if (t.tg || t.date < p.start || t.date > p.end) continue;
+    const a = acc(t.acc); if (!a || a.cur !== 'HNL') continue;
+    if (t.type === 'income' && !a.shared) base += t.amount;
+    else if (t.type === 'expense' && isTitheCat(cat(t.cat)) && (!a.shared || t.by === me())) paid += t.amount;
+  }
+  const due = round2(base * pct / 100);
+  return {pct, base, due, paid, pending:Math.max(0, round2(due - paid)), extra:Math.max(0, round2(paid - due))};
+}
+function titheCard(){
+  const pct = +S.profile.tithe_percent || 0; if (!pct) return '';
+  const p = period(), t = titheInfo(p), prev = titheInfo(period(addMonths(p.start, -1)));
+  const fill = t.due ? Math.min(100, t.paid / t.due * 100) : (t.paid ? 100 : 0);
+  const done = t.due > 0 && t.pending === 0;
+  return `<div class="section"><div class="sec-h"><h2>Diezmo</h2><span class="muted" style="font-size:12.5px">${pct}% de tus ingresos</span></div>
+    <div class="tithe ${done ? 'done' : ''}">
+      <div class="th-top"><span class="mi">${ic('heart','sm')}</span>
+        <div class="th-tx"><small>${done ? '¡Al día este mes!' : t.due ? 'Pendiente este mes' : 'Aún no registras ingresos este mes'}</small>${t.due ? bigMoney(done ? t.paid : t.pending) : '<b class="big">—</b>'}</div>
+        ${t.pending > 0 ? `<button class="btn sm" data-a="payTithe" data-v="${t.pending}">Registrar</button>` : ''}</div>
+      ${t.due ? `<div class="bar" style="margin-top:12px"><i style="width:${fill}%;background:var(--gold)"></i></div>
+      <div class="th-foot"><span>Dado <b>${money(t.paid)}</b></span><span>Corresponde <b>${money(t.due)}</b></span></div>` : ''}
+      ${t.extra > 0 ? `<div class="th-note">Diste ${money(t.extra)} más de lo que corresponde. ¡Gracias por tu generosidad!</div>` : ''}
+      ${prev.pending > 0 ? `<div class="th-note">El mes pasado quedó pendiente ${money(prev.pending)}. <button class="link" data-a="payTithe" data-v="${prev.pending}" data-d="${period(addMonths(p.start, -1)).end}">Registrarlo</button></div>` : ''}
+    </div></div>`;
+}
 function monthCard(sm){
   const base = Math.max(sm.inc, sm.exp + sm.gen, 1);
   const w = v => Math.max(0, v / base * 100).toFixed(1);
@@ -577,6 +610,7 @@ function vHome(){
   </div>
   <div class="section"><div class="sec-h"><h2>Este mes</h2><button class="link" data-a="tab" data-v="stats">Estadísticas</button></div>
     ${monthCard(sm)}</div>
+  ${titheCard()}
   ${buds.length ? `<div class="section"><div class="sec-h"><h2>Presupuestos</h2><button class="link" data-a="nav" data-v="budgets">Ver todos</button></div>
     <div class="list">${buds.map(budRow).join('')}</div></div>` : ''}
   <div class="section"><div class="sec-h"><h2>Movimientos recientes</h2>${recent.length ? '<button class="link" data-a="tab" data-v="tx">Ver todos</button>' : ''}</div>
@@ -827,7 +861,7 @@ function vStats(){
   const sc = u.statsScope, sd = dayFor(sc);
   const p = period(addMonths(period(TODAY, sd).start, u.statsOff), sd);
   const sm = summary(p.start, p.end, sc), bd = breakdown(p.start, p.end, sc, 'expense');
-  const tithePct = sm.inc ? sm.gen / sm.inc * 100 : 0, goalPct = +S.profile.tithe_percent;
+  const tithePct = sm.inc ? sm.gen / sm.inc * 100 : 0, goalPct = +S.profile.tithe_percent, ti = titheInfo(p);
   let members = '';
   if (sc === 'family'){
     const m = {}; S.tx.forEach(t => { const a = acc(t.acc); if (!a?.shared || t.type !== 'expense' || t.date < p.start || t.date > p.end) return; m[t.by] = (m[t.by] || 0) + t.amount; });
@@ -851,7 +885,7 @@ function vStats(){
       <div class="legend">${bd.map(x => `<div class="li"><i style="background:${x.c.color}"></i><span>${esc(x.c.icon)} ${esc(x.c.name)}</span><b>${money(x.v)}</b><small>${x.p.toFixed(1)}%</small></div>`).join('')}</div>` : '<div class="muted">Sin gastos en este período.</div>'}</div></div>
   ${sc === 'personal' ? `<div class="section"><div class="sec-h"><h2>Generosidad</h2></div><div class="panel" style="display:flex;gap:14px;align-items:center">
     ${ring(goalPct ? Math.min(100, tithePct / goalPct * 100) : 0, 'var(--gold)', Math.round(tithePct) + '%')}
-    <div style="min-width:0"><b>${money(sm.gen)} dados este mes</b><div class="muted" style="font-size:13px">Equivale al ${tithePct.toFixed(1)}% de tus ingresos.${goalPct ? ` Tu meta de diezmo es ${goalPct}%.` : ''}</div></div></div></div>` : ''}
+    <div style="min-width:0"><b>${money(sm.gen)} dados este mes</b><div class="muted" style="font-size:13px">Equivale al ${tithePct.toFixed(1)}% de tus ingresos.${goalPct ? ` Diezmo (${goalPct}%): corresponde ${money(ti.due)}, dado ${money(ti.paid)}${ti.pending ? `, <b style="color:var(--gold)">pendiente ${money(ti.pending)}</b>` : ' — al día'}.` : ''}</div></div></div></div>` : ''}
   <div class="section"><div class="sec-h"><h2>Últimos 6 meses</h2></div><div class="panel">${trendChart(sc)}</div></div>
   ${members}`;
 }
@@ -1145,7 +1179,7 @@ function vSettings(){
   <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:6px">Finanzas</div>
     <div class="toggle"><div class="t"><b>Inicio del mes financiero</b><small>Período actual: ${dShort(p.start)} – ${dShort(p.end)}</small></div>
       <select class="inp" style="width:auto" data-in="period_start_day" aria-label="Día de inicio">${Array.from({length:28}, (_, i) => `<option value="${i + 1}" ${pr.period_start_day === i + 1 ? 'selected' : ''}>Día ${i + 1}</option>`).join('')}</select></div>
-    <div class="toggle"><div class="t"><b>Diezmo sugerido</b><small>Al registrar un ingreso te ofrecemos registrarlo</small></div>
+    <div class="toggle"><div class="t"><b>Diezmo</b><small>Te mostramos cuánto corresponde y cuánto falta cada mes</small></div>
       <select class="inp" style="width:auto" data-in="tithe_percent" aria-label="Porcentaje de diezmo">${[0,5,10,12,15,20].map(v => `<option value="${v}" ${+pr.tithe_percent === v ? 'selected' : ''}>${v ? v + '%' : 'No sugerir'}</option>`).join('')}</select></div>
     <div class="toggle"><div class="t"><b>Moneda principal</b><small>Para cuentas nuevas</small></div>
       <select class="inp" style="width:auto" data-in="default_currency" aria-label="Moneda principal"><option value="HNL" ${pr.default_currency === 'HNL' ? 'selected' : ''}>Lempiras</option><option value="USD" ${pr.default_currency === 'USD' ? 'selected' : ''}>Dólares</option></select></div>
@@ -1260,6 +1294,15 @@ const A = {
   },
   lockNow: () => { S.locked = true; S.pinEntry = ''; closeSheet(); render(); },
   add: el => startAdd(el.dataset.v),
+  payTithe: el => {
+    const tc = S.categories.find(c => c.scope === 'p' && isTitheCat(c) && !c.archived);
+    if (!tc) return toast('Crea una categoría de generosidad llamada "Diezmo" para registrarlo.', 'warn');
+    startAdd('expense'); if (!S.draft) return;
+    const own = writableAccounts().filter(a => !a.shared && a.cur === 'HNL');
+    if (own.length && acc(S.draft.acc)?.shared) S.draft.acc = (own.find(a => a.id === LS.get('lastAcc.' + me())) || own[0]).id;
+    S.draft.amount = String(round2(+el.dataset.v)); S.draft.cat = tc.id;
+    S.draft.desc = el.dataset.d ? 'Diezmo del mes anterior' : 'Diezmo'; if (el.dataset.d) S.draft.date = el.dataset.d; renderAdd();
+  },
   dType: el => { S.draft.type = el.dataset.v; S.draft.step = 1; S.draft.cat = null; renderAdd(); },
   dAcc: el => { S.draft[el.dataset.k] = el.dataset.v; if (el.dataset.k === 'acc') S.draft.cat = null; renderAdd(); },
   key: el => {
