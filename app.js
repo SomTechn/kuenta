@@ -1197,6 +1197,7 @@ function vSettings(){
   <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:6px">Legal</div>
     <div class="toggle"><div class="t"><b>Términos de uso</b></div><a class="link" href="terminos.html" target="_blank" rel="noopener">Abrir</a></div>
     <div class="toggle"><div class="t"><b>Política de privacidad</b></div><a class="link" href="privacidad.html" target="_blank" rel="noopener">Abrir</a></div>
+    ${CFG.SUPPORT_EMAIL ? `<div class="toggle"><div class="t"><b>Soporte</b><small>${esc(CFG.SUPPORT_EMAIL)}</small></div><a class="link" href="mailto:${esc(CFG.SUPPORT_EMAIL)}?subject=${encodeURIComponent('Ayuda con Kuenta')}">Escribir</a></div>` : ''}
   </div>
   <button class="textbtn" style="color:var(--neg);margin:18px auto 4px;display:block" data-a="deleteAccount">Eliminar mi cuenta</button>
   ${credit}`;
@@ -1404,13 +1405,13 @@ const F = {
     const inv = pendingInvite();
     const redirect = location.origin + location.pathname + (inv ? `?invite=${inv}` : '');
     const data = await q(sb.auth.signUp({email, password:p1, options:{data:{full_name:name}, emailRedirectTo:redirect}}));
-    if (!data.session){ S.auth = 'login'; S.authMsg = 'Te enviamos un correo para confirmar tu cuenta. Ábrelo y luego entra aquí.'; render(); }
+    if (!data.session){ S.auth = 'login'; S.authMsg = 'Te enviamos un correo para confirmar tu cuenta. Si no lo ves en unos minutos, revisa Spam o Promociones. Ábrelo y luego entra aquí.'; render(); }
   },
   forgot: async () => {
     const email = $('#fg-e').value.trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return ($('#ferr').textContent = 'Escribe un correo válido.');
     await q(sb.auth.resetPasswordForEmail(email, {redirectTo:location.origin + location.pathname}));
-    S.authMsg = 'Si el correo existe, te llegará un enlace en unos minutos.'; render();
+    S.authMsg = 'Si el correo existe, te llegará un enlace en unos minutos. Revisa también Spam o Promociones.'; render();
   },
   recovery: async () => {
     const p1 = $('#rc-p').value, p2 = $('#rc-p2').value, err = $('#ferr');
