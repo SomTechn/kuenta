@@ -331,7 +331,9 @@ const vSplash = () => `<div class="lock">${brand}<div class="spin" role="status"
 const vSetupConfig = () => `<div class="lock">${brand}<div class="note" style="max-width:340px">Falta conectar Supabase. Abre <b>config.js</b> y pega la URL de tu proyecto y la clave <b>anon</b>.</div></div>`;
 
 /* ============ autenticación ============ */
-function vAuth(){
+const credit = `<div class="credit"><img src="icons/somar-labs.png" alt="" width="18" height="18">Una app de <b>Somar Labs</b></div>`;
+const vAuth = () => vAuthInner().replace(/<\/div>$/, credit + '</div>');
+function vAuthInner(){
   const m = S.authMsg ? `<div class="${S.authMsg.startsWith('!') ? 'err' : 'ok-msg'}" style="text-align:center">${esc(S.authMsg.replace(/^!/, ''))}</div>` : '';
   const pending = pendingInvite() ? '<div class="note" style="max-width:340px">Te invitaron a una familia en Kuenta. Entra o crea tu cuenta para aceptar.</div>' : '';
   if (S.auth === 'signup') return `<div class="lock">${brand}<h1 style="font-size:20px">Crea tu cuenta</h1>${pending}
@@ -1064,7 +1066,8 @@ function vSettings(){
     <div class="toggle"><div class="t"><b>Términos de uso</b></div><a class="link" href="terminos.html" target="_blank" rel="noopener">Abrir</a></div>
     <div class="toggle"><div class="t"><b>Política de privacidad</b></div><a class="link" href="privacidad.html" target="_blank" rel="noopener">Abrir</a></div>
   </div>
-  <button class="textbtn" style="color:var(--neg);margin:18px auto 4px;display:block" data-a="deleteAccount">Eliminar mi cuenta</button>`;
+  <button class="textbtn" style="color:var(--neg);margin:18px auto 4px;display:block" data-a="deleteAccount">Eliminar mi cuenta</button>
+  ${credit}`;
 }
 function deleteSheet(){
   const others = S.family ? Object.keys(S.family.members).filter(id => id !== me()) : [];
