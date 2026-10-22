@@ -81,7 +81,11 @@ const P = {
   check:'M5 12l5 5 9-10',
   camera:'M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
   download:'M12 4v11M7 10l5 5 5-5M4 20h16',
-  logout:'M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11'
+  logout:'M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11',
+  calendar:'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
+  card:'M3 6h18v12H3zM3 10h18M7 15h4',
+  spark:'M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z',
+  share:'M12 3v12M7 8l5-5 5 5M5 14v6h14v-6'
 };
 const ic = (n, cls = '') => `<span class="ic ${cls}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="${P[n]}"/></svg></span>`;
 
@@ -170,7 +174,7 @@ const freshUI = () => ({screen:'home', back:null, txFilter:'all', txAcc:'', txQu
 let S = {};
 function resetState(){
   S = { user:null, profile:null, family:null, users:{}, invites:[], accounts:[], balances:{}, categories:[], tx:[], atts:{},
-    budgets:[], goals:[], notifs:[], ui:freshUI(), auth:'login', authMsg:'', locked:false, pinEntry:'', needPinSetup:false,
+    budgets:[], goals:[], notifs:[], reminder:null, scheduled:[], debts:[], challenges:[], v06:false, ui:freshUI(), auth:'login', authMsg:'', locked:false, pinEntry:'', needPinSetup:false,
     loadedAt:0, txFrom:null, draft:null, form:{} };
 }
 resetState();
@@ -311,7 +315,7 @@ async function loadTx(){
   atts.forEach(a => (S.atts[a.transaction_id] ||= []).push(a));
 }
 async function loadNotifs(){
-  S.notifs = await q(sb.from('notifications').select('id,type,title,body,read_at,created_at').order('created_at', {ascending:false}).limit(100));
+  S.notifs = await q(sb.from('notifications').select('id,type,title,body,data,read_at,created_at').order('created_at', {ascending:false}).limit(100));
 }
 async function loadProfile(){ S.profile = await q(sb.from('profiles').select('*').eq('id', me()).single()); }
 async function loadSubscription(){
@@ -337,7 +341,7 @@ function planInfo(){
 }
 async function loadAll(){
   await loadProfile();
-  await Promise.all([loadSubscription(), loadFamily(), loadAccounts(), loadCategories(), loadBudgets(), loadGoals(), loadTx(), loadNotifs()]);
+  await Promise.all([loadSubscription(), loadFamily(), loadAccounts(), loadCategories(), loadBudgets(), loadGoals(), loadTx(), loadNotifs(), loadPlanner()]);
   S.loadedAt = Date.now();
 }
 /* Tras un cambio: refresca saldos y avisa las alertas nuevas que creó el servidor */
@@ -386,8 +390,10 @@ function render(){
   if (S.needPinSetup){ v.className = 'full'; v.innerHTML = vPinSetup(); n.hidden = true; return; }
   v.className = '';
   const views = {home:vHome, tx:vTx, stats:vStats, more:vMore, budgets:vBudgets, goals:vGoals, family:vFamily,
-    categories:vCategories, reports:vReports, alerts:vAlerts, settings:vSettings, accounts:vAccounts};
+    categories:vCategories, reports:vReports, alerts:vAlerts, settings:vSettings, accounts:vAccounts,
+    reminders:vReminders, scheduled:vScheduled, debts:vDebts, debt:vDebt, savings:vSavings};
   v.innerHTML = (views[S.ui.screen] || vHome)();
+  if (pendingGo) setTimeout(applyGo, 0);
   const tabs = [['home','Inicio','home'],['tx','Movimientos','list'],null,['stats','Estadísticas','chart'],['more','Más','grid']];
   const main = ['home','tx','stats','more'].includes(S.ui.screen) ? S.ui.screen : 'more';
   n.innerHTML = tabs.map(t => t ? `<button data-a="tab" data-v="${t[0]}" class="${main === t[0] ? 'on' : ''}" ${main === t[0] ? 'aria-current="page"' : ''}>${ic(t[2])}${t[1]}</button>`
@@ -609,7 +615,7 @@ function vHome(){
   const unread = S.notifs.filter(n => !n.read_at).length;
   const buds = S.budgets.map(b => ({b, ...budgetInfo(b)})).sort((x, y) => y.pct - x.pct).slice(0, 3);
   const recent = [...S.tx].sort((x, y) => y.date.localeCompare(x.date)).slice(0, 6);
-  const name = firstName(S.profile.full_name);
+  const name = firstName(S.profile.full_name), up = upcoming(7);
   return `
   <div class="top"><div class="hello"><div class="avatar">${esc(name[0])}</div><div style="min-width:0"><b>Hola, ${esc(name)}</b><small>Mes financiero · ${dShort(p.start)} – ${dShort(p.end)}</small></div></div>
     <button class="iconbtn" data-a="nav" data-v="alerts" aria-label="Alertas${unread ? `, ${unread} sin leer` : ''}">${ic('bell')}${unread ? `<span class="dot">${unread > 9 ? '9+' : unread}</span>` : ''}</button></div>
@@ -627,8 +633,10 @@ function vHome(){
     <button data-a="add" data-v="transfer"><span class="q tr">${ic('swap')}</span>Transferir</button>
     <button data-a="tab" data-v="more"><span class="q">${ic('grid')}</span>Más</button>
   </div>
+  ${up.length ? `<div class="section"><div class="sec-h"><h2>Próximos pagos</h2><button class="link" data-a="nav" data-v="scheduled">Ver todos</button></div>
+    <div class="list">${up.slice(0, 4).map(upRow).join('')}</div></div>` : ''}
   <div class="section"><div class="sec-h"><h2>Este mes</h2><button class="link" data-a="tab" data-v="stats">Estadísticas</button></div>
-    ${monthCard(sm)}</div>
+    ${monthCard(sm)}${saveTeaser()}</div>
   ${titheCard()}
   ${buds.length ? `<div class="section"><div class="sec-h"><h2>Presupuestos</h2><button class="link" data-a="nav" data-v="budgets">Ver todos</button></div>
     <div class="list">${buds.map(budRow).join('')}</div></div>` : ''}
@@ -814,7 +822,7 @@ async function saveTx(){
   const row = await q(sb.from('transactions').insert({account_id:d.acc, category_id:d.cat, type:d.type, amount, occurred_on:d.date,
     description:d.desc.trim().slice(0, 120) || null, notes:d.note.trim().slice(0, 500) || null, created_by:me()}).select().single());
   const t = mapTx(row); S.tx.unshift(t);
-  LS.set('lastAcc.' + me(), d.acc);
+  LS.set('lastAcc.' + me(), d.acc); LS.set('lastTx.' + me(), Date.now()); markRemindersRead();
   const file = d.file; closeSheet(); S.draft = null; render();
   if (file){ try { await uploadAttachment(t.id, file); render(); } catch (e) { toast('El movimiento se guardó, pero el comprobante no: ' + errMsg(e), 'over'); } }
   if (t.type === 'expense') toast(`${c.kind === 'generosity' ? 'Generosidad' : 'Gasto'} guardado`);
@@ -912,8 +920,11 @@ function vStats(){
 /* ============ Más ============ */
 function vMore(){
   const items = [['accounts','wallet','Cuentas',`${visAccounts().length} activas`],['budgets','gauge','Presupuestos',`${S.budgets.length} activos`],
-    ['goals','target','Metas de ahorro',`${S.goals.length} metas`],['family','users','Familia',S.family ? S.family.name : 'Crea o únete a una'],
+    ['goals','target','Metas de ahorro',`${S.goals.length} metas`],['savings','spark','Ahorro inteligente','Tu plan, nivel y retos'],
+    ['debts','card','Deudas',`${S.debts.filter(d => d.status === 'active').length} activas`],['scheduled','calendar','Pagos programados',`${S.scheduled.filter(s => s.active).length} activos`],
+    ['family','users','Familia',S.family ? S.family.name : 'Crea o únete a una'],
     ['categories','tag','Categorías','Personaliza las tuyas'],['reports','file','Informes','PDF y Excel por fechas'],
+    ['reminders','bell','Recordatorios',S.reminder?.enabled ? S.reminder.times.map(fmtTime).join(' · ') : 'Desactivados'],
     ['alerts','bell','Alertas',`${S.notifs.filter(n => !n.read_at).length} sin leer`],['settings','gear','Ajustes','Seguridad y preferencias']];
   return `<div class="subhead"><h1>Más</h1></div>
   <div class="panel" style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><div class="avatar">${esc(firstName(S.profile.full_name)[0])}</div>
@@ -1005,17 +1016,17 @@ function vGoals(){
       ${canEditScope(g.scope) ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${!g.linked && !done ? `<button class="btn ghost sm" data-a="contrib" data-v="${g.id}">${ic('plus','sm')} Aportar</button>` : ''}<button class="btn ghost sm" data-a="archiveGoal" data-v="${g.id}">Archivar</button></div>` : ''}
     </div>`; }).join('') || '<div class="empty">Crea una meta: fondo de emergencia, viaje o estudios.</div>'}</div>`;
 }
-function goalSheet(){
-  S.form = {icon:'🎯'};
+function goalSheet(pre = {}){
+  S.form = {icon:pre.icon || '🎯'};
   const scopes = `<option value="p">Personal</option>${hasFamily() && canEditScope('f') ? '<option value="f">Familia</option>' : ''}`;
   const linkable = visAccounts().filter(a => a.type === 'ahorro' && a.cur === 'HNL' && canWriteAcc(a));
   openSheet(`${sheetHead('Nueva meta')}<form class="form" data-f="goal" novalidate>
-    <div class="field"><label for="go-n">Nombre</label><input class="inp" id="go-n" required maxlength="60" placeholder="Ej: Fondo de emergencia"></div>
-    <div class="row2"><div class="field"><label for="go-t">Meta (L)</label><input class="inp" id="go-t" inputmode="decimal" required placeholder="25000"></div>
-    <div class="field"><label for="go-d">Fecha objetivo</label><input class="inp" id="go-d" type="date" required min="${addDays(TODAY, 1)}" value="${addMonths(TODAY, 12)}"></div></div>
+    <div class="field"><label for="go-n">Nombre</label><input class="inp" id="go-n" required maxlength="60" placeholder="Ej: Fondo de emergencia" value="${esc(pre.name || '')}"></div>
+    <div class="row2"><div class="field"><label for="go-t">Meta (L)</label><input class="inp" id="go-t" inputmode="decimal" required placeholder="25000" value="${pre.target || ''}"></div>
+    <div class="field"><label for="go-d">Fecha objetivo</label><input class="inp" id="go-d" type="date" required min="${addDays(TODAY, 1)}" value="${pre.date || addMonths(TODAY, 12)}"></div></div>
     <div class="row2"><div class="field"><label for="go-s">De quién es</label><select class="inp" id="go-s">${scopes}</select></div>
     <div class="field"><label for="go-a">Medir con</label><select class="inp" id="go-a"><option value="">Mis aportes</option>${linkable.map(a => `<option value="${a.id}" data-sc="${a.shared ? 'f' : 'p'}">Saldo de ${esc(a.name)}</option>`).join('')}</select></div></div>
-    <div class="field"><label>Ícono</label><div class="emojis">${GOAL_EMOJIS.map(e => `<button type="button" class="${e === '🎯' ? 'on' : ''}" data-a="pickIcon" data-v="${e}">${e}</button>`).join('')}</div></div>
+    <div class="field"><label>Ícono</label><div class="emojis">${GOAL_EMOJIS.map(e => `<button type="button" class="${e === S.form.icon ? 'on' : ''}" data-a="pickIcon" data-v="${e}">${e}</button>`).join('')}</div></div>
     <div class="err" id="ferr"></div><button class="btn" type="submit">Crear meta</button></form>`);
 }
 function contribSheet(id){
@@ -1174,13 +1185,14 @@ async function exportPdf(){
 
 /* ---- alertas ---- */
 function vAlerts(){
-  const iconFor = {budget:['gauge','var(--warn)'], goal:['target','var(--pos)'], family:['users','var(--brand)'], system:['bell','var(--muted)']};
+  const iconFor = {budget:['gauge','var(--warn)'], goal:['target','var(--pos)'], family:['users','var(--brand)'], system:['bell','var(--muted)'],
+    reminder:['bell','var(--brand)'], scheduled:['calendar','var(--warn)'], debt:['card','var(--neg)'], savings:['spark','var(--gold)']};
   return `${subhead('Alertas', S.notifs.some(n => !n.read_at) ? '<button class="link" data-a="readAll">Marcar leídas</button>' : '')}
   <div class="list">${S.notifs.map(n => { const [i, c] = iconFor[n.type] || iconFor.system; return `<button class="tx" data-a="readOne" data-v="${n.id}" style="${n.read_at ? 'opacity:.65' : ''}">
     <span class="tile" style="background:${soft(c)};color:${c}">${ic(i,'sm')}</span>
     <span class="mid"><b style="white-space:normal">${esc(n.title)}</b><small>${esc(n.body || '')}</small></span>
     <span class="amt"><small>${dShort(n.created_at.slice(0, 10))}</small>${n.read_at ? '' : '<b style="color:var(--brand);font-size:18px" aria-label="Sin leer">•</b>'}</span></button>`; }).join('') || '<div class="empty">Sin alertas por ahora.</div>'}</div>
-  <div class="note" style="margin-top:14px">Te avisamos cuando un presupuesto llega a su límite de aviso o al 100%, cuando cumples una meta y cuando alguien se une a tu familia.</div>`;
+  <div class="note" style="margin-top:14px">Te avisamos cuando un presupuesto llega a su límite de aviso o al 100%, cuando cumples una meta, cuando alguien se une a tu familia, un día antes y el mismo día de tus pagos programados y cuotas. <button class="link" data-a="nav" data-v="reminders">Configurar recordatorios</button></div>`;
 }
 
 /* ---- ajustes ---- */
@@ -1296,7 +1308,7 @@ const A = {
     } catch (e) { S.authMsg = '!' + errMsg(e); }
     render();
   },
-  signOut: async () => { await sb.auth.signOut(); },
+  signOut: async () => { await dropPushHere(); await sb.auth.signOut(); },
   forgotPin: async () => {
     LS.del('pin.' + me()); LS.del('bio.' + me()); LS.set('tries.' + me(), 0);
     S.authMsg = 'Entra con tu correo y contraseña para crear un PIN nuevo.';
@@ -1372,7 +1384,7 @@ const A = {
   editBudget: el => budgetSheet(el.dataset.v),
   newBudget: () => budgetSheet(null),
   delBudget: async el => { await q(sb.from('budgets').delete().eq('id', el.dataset.v)); S.budgets = S.budgets.filter(b => b.id !== el.dataset.v); closeSheet(); render(); toast('Presupuesto eliminado'); },
-  newGoal: goalSheet,
+  newGoal: () => goalSheet(),
   contrib: el => contribSheet(el.dataset.v),
   archiveGoal: async el => { await q(sb.from('goals').update({status:'archived'}).eq('id', el.dataset.v)); S.goals = S.goals.filter(g => g.id !== el.dataset.v); render(); toast('Meta archivada'); },
   newAcc: () => accSheet(null), editAcc: el => accSheet(el.dataset.v),
@@ -1404,8 +1416,9 @@ const A = {
   exportCsv, exportPdf,
   readAll: async () => { const ids = S.notifs.filter(n => !n.read_at).map(n => n.id); const now = new Date().toISOString();
     await q(sb.from('notifications').update({read_at:now}).in('id', ids)); S.notifs.forEach(n => n.read_at ||= now); render(); },
-  readOne: async el => { const n = S.notifs.find(x => x.id === el.dataset.v); if (n.read_at) return; const now = new Date().toISOString();
-    await q(sb.from('notifications').update({read_at:now}).eq('id', n.id)); n.read_at = now; render(); },
+  readOne: async el => { const n = S.notifs.find(x => x.id === el.dataset.v), d = n.data || {};
+    if (!n.read_at){ const now = new Date().toISOString(); await q(sb.from('notifications').update({read_at:now}).eq('id', n.id)); n.read_at = now; }
+    if (d.screen) openTarget(d.screen, d.id); else render(); },
   theme: el => { LS.set('theme', el.dataset.v); applyTheme(); render(); },
   changePin: pinSheet, changePass: passSheet, deleteAccount: deleteSheet,
   npin: async el => {
@@ -1468,7 +1481,7 @@ const F = {
     const uid = me(), familySurvives = !!S.family && (!isOwner() || action === 'transfer');
     await deleteMyFiles(familySurvives);
     await q(sb.rpc('delete_my_account', {p_family_action:action, p_new_owner:newOwner}));
-    ['pin.', 'bio.', 'tries.', 'lastAcc.'].forEach(k => LS.del(k + uid));
+    ['pin.', 'bio.', 'tries.', 'lastAcc.', 'lastTx.', 'push.', 'remDone.'].forEach(k => LS.del(k + uid));
     S.authMsg = 'Tu cuenta fue eliminada. Gracias por usar Kuenta.';
     closeSheet();
     await sb.auth.signOut({scope:'local'}).catch(() => {});
@@ -1552,6 +1565,906 @@ const F = {
   }
 };
 
+/* =====================================================================
+   RECORDATORIOS, PAGOS PROGRAMADOS, DEUDAS Y AHORRO
+   ===================================================================== */
+let pendingGo = null; // pantalla que pidió abrir una notificación (?go=)
+const VAPID = CFG.VAPID_PUBLIC_KEY || '';
+const DEFAULT_TIMES = ['09:00','13:00','20:00'];
+const localTZ = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Tegucigalpa'; } catch { return 'America/Tegucigalpa'; } };
+const defaultReminder = () => ({enabled:true, times:[...DEFAULT_TIMES], timezone:localTZ(), skip_if_logged:true, scheduled_enabled:true, debt_enabled:true, saved:false});
+const fmtTime = t => { const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}:${pad(m)} ${h < 12 ? 'a. m.' : 'p. m.'}`; };
+const needs06 = () => S.v06 ? '' : '<div class="note" style="margin-bottom:12px">Esta función se está activando en tu cuenta. Vuelve a intentarlo en un rato.</div>';
+
+/* ---- fechas ---- */
+const lastDay = (y, m) => new Date(y, m, 0).getDate(); // m: 1-12
+const ymAdd = (ym, n) => { const [y, m] = ym.split('-').map(Number), d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+const dayIn = (ym, day) => { const [y, m] = ym.split('-').map(Number); return `${ym}-${pad(Math.min(day, lastDay(y, m)))}`; };
+const dDiff = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5);
+const monthsBetween = (a, b) => { const [y1, m1, d1] = a.split('-').map(Number), [y2, m2, d2] = b.split('-').map(Number); return Math.max(0, (y2 - y1) * 12 + m2 - m1 - (d2 < d1 ? 1 : 0)); };
+const monthLabel = s => new Date(s + 'T12:00:00').toLocaleDateString('es-HN', {month:'short', year:'numeric'}).replace('.', '');
+const whenLabel = s => { const d = dDiff(TODAY, s);
+  return d < 0 ? {t:`Atrasado ${-d} ${d === -1 ? 'día' : 'días'}`, c:'over'} : d === 0 ? {t:'Hoy', c:'warn'} : d === 1 ? {t:'Mañana', c:'warn'} : d <= 7 ? {t:`En ${d} días`, c:'brand'} : {t:dShort(s), c:'mute'}; };
+const roundTo = (n, s) => Math.max(s, Math.round(n / s) * s);
+const fmtRate = r => `${Math.round(r * 100) / 100}%`;
+
+/* ---- carga ---- */
+const mapSch = r => ({id:r.id, scope:r.family_id ? 'f' : 'p', acc:r.account_id, cat:r.category_id, name:r.name, amount:+r.amount, freq:r.frequency, anchor:r.anchor_day,
+  next:r.next_date, end:r.end_date, before:r.remind_day_before, same:r.remind_same_day, active:r.is_active});
+const mapDebt = r => ({id:r.id, name:r.name, lender:r.lender || '', kind:r.kind, cur:r.currency, orig:+r.original_amount, bal0:+r.current_balance, rate:+r.annual_rate,
+  rtype:r.rate_type, term:r.term_months, inst:r.installment == null ? null : +r.installment, start:r.start_date, from:r.tracking_from, payDay:r.payment_day,
+  acc:r.account_id, cat:r.category_id, icon:r.icon, status:r.status, notes:r.notes || '', pays:[]});
+const mapDebtPay = r => ({id:r.id, amount:+r.amount, principal:+r.principal, interest:+r.interest, extra:r.is_extra, date:r.paid_on, tx:r.transaction_id});
+const mapCh = r => ({id:r.id, kind:r.kind, name:r.name, base:+r.base_amount, slots:r.slots, done:r.done || [], start:r.start_date, goal:r.goal_id, status:r.status});
+async function loadReminders(){ const r = await q(sb.from('reminder_settings').select('*').eq('user_id', me()).maybeSingle()); S.reminder = r ? {...r, saved:true} : defaultReminder(); }
+async function loadScheduled(){ S.scheduled = (await q(sb.from('scheduled_payments').select('*').order('next_date').order('created_at'))).map(mapSch); }
+async function loadDebts(){
+  const [ds, ps] = await Promise.all([q(sb.from('debts').select('*').neq('status', 'archived').order('created_at')),
+    fetchAll(() => sb.from('debt_payments').select('*').order('paid_on').order('created_at'))]);
+  S.debts = ds.map(mapDebt);
+  ps.forEach(p => { const d = S.debts.find(x => x.id === p.debt_id); if (d) d.pays.push(mapDebtPay(p)); });
+}
+async function loadChallenges(){ S.challenges = (await q(sb.from('savings_challenges').select('*').neq('status', 'archived').order('created_at'))).map(mapCh); }
+// Si la base aún no tiene la migración 06, el resto de la app sigue funcionando
+async function loadPlanner(){
+  try { await Promise.all([loadReminders(), loadScheduled(), loadDebts(), loadChallenges()]); S.v06 = true; }
+  catch { S.v06 = false; S.reminder = S.reminder || defaultReminder(); }
+}
+
+/* ---- abrir lo que pidió una notificación ---- */
+function openTarget(screen, id){
+  closeSheet();
+  if (screen === 'add') return startAdd('expense');
+  if (screen === 'scheduled'){ go('scheduled', 'home'); if (id && S.scheduled.some(s => s.id === id)) schSheet(id); return; }
+  if (screen === 'debt' && S.debts.some(d => d.id === id)){ S.ui.debtId = id; go('debt', 'debts'); return; }
+  if (screen === 'debt') screen = 'debts';
+  if (['debts','savings','alerts','budgets','goals','reminders'].includes(screen)) go(screen, 'home');
+}
+function applyGo(){ const g = pendingGo; pendingGo = null; if (g && S.profile && !S.locked && !S.needPinSetup) openTarget(g.screen, g.id); }
+function markRemindersRead(){
+  const ids = S.notifs.filter(n => n.type === 'reminder' && !n.read_at).map(n => n.id); if (!ids.length) return;
+  const now = new Date().toISOString(); S.notifs.forEach(n => { if (ids.includes(n.id)) n.read_at = now; });
+  sb.from('notifications').update({read_at:now}).in('id', ids).then(() => {}, () => {});
+}
+
+/* ============ recordatorios y notificaciones ============ */
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+function pushState(){
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) return isIOS() && !isStandalone() ? 'ios' : 'no';
+  if (Notification.permission === 'denied') return 'denied';
+  const v = LS.get('push.' + me());
+  if (Notification.permission === 'granted' && v) return v === true ? 'push' : 'local';
+  return 'off';
+}
+const swReady = () => Promise.race([navigator.serviceWorker.ready,
+  new Promise((_, rej) => setTimeout(() => rej(new Error('Las notificaciones necesitan abrir Kuenta con https. Intenta de nuevo.')), 5000))]);
+async function enablePush(){
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return toast('No diste permiso. Puedes activarlo después en los ajustes del navegador.', 'warn');
+  const reg = await swReady();
+  let mode = 'local';
+  if (VAPID && 'PushManager' in window && S.v06){
+    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:unb64(VAPID)});
+    const j = sub.toJSON();
+    await q(sb.rpc('save_push_subscription', {p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_user_agent:navigator.userAgent.slice(0, 300)}));
+    mode = true;
+  }
+  LS.set('push.' + me(), mode);
+  if (!S.reminder.saved) await saveReminder({});
+  await reg.showNotification('¡Listo! Así te avisaremos ✍️', {body:'Te recordaremos registrar tus movimientos y tus pagos.', icon:'icons/icon-192.png', badge:'icons/favicon-48.png', tag:'kuenta-test'});
+  render(); toast(mode === true ? 'Notificaciones activadas en este teléfono' : 'Avisos activados mientras Kuenta esté abierta');
+}
+async function dropPushHere(){
+  try {
+    LS.del('push.' + me());
+    const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+    const sub = await reg?.pushManager?.getSubscription();
+    if (sub){ await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); await sub.unsubscribe(); }
+  } catch {}
+}
+async function saveReminder(patch){
+  const r = {...(S.reminder || defaultReminder()), ...patch};
+  const times = [...new Set((r.times || []).map(t => String(t).slice(0, 5)).filter(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t)))].sort().slice(0, 6);
+  const row = {user_id:me(), enabled:!!r.enabled, times, timezone:localTZ(), skip_if_logged:!!r.skip_if_logged, scheduled_enabled:!!r.scheduled_enabled, debt_enabled:!!r.debt_enabled};
+  if (S.v06) await q(sb.from('reminder_settings').upsert(row));
+  S.reminder = {...row, saved:true};
+}
+/* Respaldo local: si este teléfono no recibe push del servidor, avisa mientras Kuenta está abierta */
+function localReminderTick(){
+  TODAY = localISO(new Date());
+  if (!S.profile || S.locked || S.needPinSetup || !S.reminder?.enabled) return;
+  if (LS.get('push.' + me()) === true) return; // el servidor ya le avisa a este teléfono
+  const now = new Date(), hm = `${pad(now.getHours())}:${pad(now.getMinutes())}`, mins = t => +t.slice(0, 2) * 60 + +t.slice(3);
+  let rec = LS.get('remDone.' + me(), {day:'', times:[]});
+  if (rec.day !== TODAY) rec = {day:TODAY, times:[]};
+  const due = S.reminder.times.filter(t => t <= hm && mins(hm) - mins(t) <= 30 && !rec.times.includes(t));
+  if (!due.length) return;
+  rec.times.push(...due); LS.set('remDone.' + me(), rec);
+  if (S.reminder.skip_if_logged && Date.now() - LS.get('lastTx.' + me(), 0) < 3 * 3600e3) return;
+  const title = '¿Ya registraste tus movimientos? ✍️';
+  if (document.visibilityState === 'visible') toast(title, 'ok', {label:'Registrar', run: async () => startAdd('expense')});
+  else if (window.Notification?.permission === 'granted' && 'serviceWorker' in navigator)
+    swReady().then(reg => reg.showNotification(title, {body:'Toma un minuto y anota lo de hoy.', icon:'icons/icon-192.png', badge:'icons/favicon-48.png', tag:'kuenta-rem', data:{url:'./?go=add'}})).catch(() => {});
+}
+function vReminders(){
+  const r = S.reminder || defaultReminder(), st = pushState();
+  const status = {
+    push:['ok', 'Activas en este teléfono', 'Te llegan aunque Kuenta esté cerrada.'],
+    local:['warn', 'Activas con Kuenta abierta', 'Por ahora te avisamos mientras Kuenta esté abierta o en segundo plano.'],
+    off:['mute', 'Desactivadas en este teléfono', 'Actívalas para recibir tus recordatorios.'],
+    denied:['over', 'Bloqueadas', 'Bloqueaste las notificaciones. Permítelas para Kuenta en los ajustes del navegador o del teléfono.'],
+    ios:['warn', 'Falta instalar Kuenta', 'En iPhone: toca Compartir ⬆️ → "Agregar a inicio", abre Kuenta desde ese ícono y vuelve aquí.'],
+    no:['mute', 'No disponibles', 'Este navegador no permite notificaciones. Prueba con Chrome, Edge o Safari actualizado.']}[st];
+  const tg = (k, title, sub) => `<div class="toggle"><div class="t"><b>${title}</b><small>${sub}</small></div><label class="sw"><input type="checkbox" data-in="remOpt" data-k="${k}" ${r[k] ? 'checked' : ''} aria-label="${title}"><span></span></label></div>`;
+  return `${subhead('Recordatorios')}${needs06()}
+  <div class="panel"><div class="eyebrow" style="margin-bottom:8px">Notificaciones</div>
+    <div style="display:flex;align-items:center;gap:12px"><span class="tile" style="background:var(--brand-soft);color:var(--brand)">${ic('bell','sm')}</span>
+      <div style="flex:1;min-width:0"><b>${status[1]}</b><small class="muted" style="display:block;font-size:12.5px">${status[2]}</small></div><span class="pill ${status[0]}">${st === 'push' || st === 'local' ? 'Sí' : 'No'}</span></div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      ${st === 'off' || (st === 'local' && VAPID) ? `<button class="btn sm" data-a="pushOn">${ic('bell','sm')} Activar notificaciones</button>` : ''}
+      ${st === 'push' || st === 'local' ? `<button class="btn ghost sm" data-a="pushTest">Probar</button><button class="btn ghost sm" data-a="pushOff">Desactivar aquí</button>` : ''}</div></div>
+  <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:2px">Registrar movimientos</div>
+    ${tg('enabled', 'Recordarme registrar', 'Un aviso a cada hora que elijas')}
+    ${r.enabled ? `<div style="padding:10px 0 4px">${r.times.map((t, i) => `<div class="timechip"><input class="inp" type="time" value="${esc(t)}" data-in="remTime" data-i="${i}" aria-label="Recordatorio ${i + 1}">
+      <button class="iconbtn" data-a="remDel" data-v="${i}" aria-label="Quitar ${fmtTime(t)}" style="color:var(--neg)">${ic('trash','sm')}</button></div>`).join('') || '<div class="muted" style="font-size:13px;margin-bottom:8px">Sin horas. Agrega al menos una.</div>'}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${r.times.length < 6 ? `<button class="btn ghost sm" data-a="remAdd">${ic('plus','sm')} Agregar hora</button>` : ''}
+      <button class="textbtn" style="font-size:13px" data-a="remReset">Usar 9:00 a. m., 1:00 p. m. y 8:00 p. m.</button></div></div>` : ''}
+    ${tg('skip_if_logged', 'No insistir si ya registré', 'Si anotaste algo en las últimas 3 horas, no te avisamos')}</div>
+  <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:2px">Pagos y deudas</div>
+    ${tg('scheduled_enabled', 'Pagos programados', 'Un día antes y el mismo día de cada pago')}
+    ${tg('debt_enabled', 'Cuotas de deudas', 'Un día antes y el día de pago de cada cuota')}</div>
+  <div class="note" style="margin-top:12px">Las notificaciones nunca muestran tus saldos. Los avisos de pagos y cuotas también aparecen en <button class="link" data-a="nav" data-v="alerts">Alertas</button>.</div>`;
+}
+
+/* ============ pagos programados ============ */
+const FREQ = {once:'Una sola vez', weekly:'Cada semana', biweekly:'Cada 2 semanas', monthly:'Cada mes', bimonthly:'Cada 2 meses', quarterly:'Cada 3 meses', yearly:'Cada año'};
+const FREQ_M = {monthly:1, bimonthly:2, quarterly:3, yearly:12};
+function nextOcc(s, from = s.next){
+  if (s.freq === 'weekly') return addDays(from, 7);
+  if (s.freq === 'biweekly') return addDays(from, 14);
+  const m = FREQ_M[s.freq]; return m ? dayIn(ymAdd(from.slice(0, 7), m), s.anchor || +from.slice(8)) : null;
+}
+function schDueUntil(s, end){ const out = []; let d = s.next; while (d && d <= end && out.length < 60 && !(s.end && d > s.end)){ out.push(d); d = nextOcc(s, d); } return out; }
+const sortSch = () => S.scheduled.sort((a, b) => a.next.localeCompare(b.next));
+function upcoming(days){
+  const lim = addDays(TODAY, days), out = [];
+  S.scheduled.filter(s => s.active && s.next <= lim).forEach(s => { const c = cat(s.cat); out.push({kind:'sch', id:s.id, date:s.next, name:s.name, amount:s.amount, cur:acc(s.acc)?.cur || 'HNL', icon:c.icon, color:c.color}); });
+  S.debts.filter(d => d.status === 'active').forEach(d => { const due = debtDue(d); if (due && due <= lim && debtBal(d) > 0) out.push({kind:'debt', id:d.id, date:due, name:'Cuota · ' + d.name, amount:debtPay(d), cur:d.cur, icon:d.icon, color:'#DC2626'}); });
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+function upRow(u){
+  const w = whenLabel(u.date);
+  return `<button class="tx" data-a="${u.kind === 'sch' ? 'schOpen' : 'debtOpen'}" data-v="${u.id}"><span class="tile" style="background:${soft(u.color)};color:${u.color}">${esc(u.icon)}</span>
+    <span class="mid"><b>${esc(u.name)}</b><small>${u.kind === 'sch' ? 'Pago programado' : 'Deuda'} · ${dShort(u.date)}</small></span>
+    <span class="amt"><b>${money(u.amount, u.cur)}</b><span class="pill ${w.c}">${w.t}</span></span></button>`;
+}
+function schRow(s){
+  const c = cat(s.cat), a = acc(s.acc), w = whenLabel(s.next);
+  return `<button class="tx" data-a="schOpen" data-v="${s.id}" style="${s.active ? '' : 'opacity:.6'}"><span class="tile" style="background:${soft(c.color)};color:${c.color}">${esc(c.icon)}</span>
+    <span class="mid"><b>${esc(s.name)}</b><small>${FREQ[s.freq]} · ${esc(a ? a.name : 'Cuenta archivada')}${s.scope === 'f' ? ' · Familia' : ''}</small></span>
+    <span class="amt"><b>${money(s.amount, a?.cur)}</b>${s.active ? `<span class="pill ${w.c}">${w.t}</span>` : '<span class="pill mute">Pausado</span>'}</span></button>`;
+}
+function vScheduled(){
+  const p = period(), act = S.scheduled.filter(s => s.active);
+  let tot = 0, n = 0;
+  act.forEach(s => { if ((acc(s.acc)?.cur || 'HNL') !== 'HNL') return; const k = schDueUntil(s, p.end).length; tot += k * s.amount; n += k; });
+  const wk = addDays(TODAY, 7);
+  const grp = (t, arr) => arr.length ? `<div class="section"><div class="sec-h"><h2>${t}</h2></div><div class="list">${arr.map(schRow).join('')}</div></div>` : '';
+  return `${subhead('Pagos programados', S.v06 && writableAccounts().length ? `<button class="btn sm" data-a="schNew">${ic('plus','sm')} Nuevo</button>` : '')}${needs06()}
+  <div class="panel"><div class="eyebrow">Por pagar hasta el ${dShort(p.end)}</div><div class="num" style="font-size:24px;font-weight:700;margin-top:2px">${money(tot)}</div>
+    <small class="muted">${n} ${n === 1 ? 'pago' : 'pagos'} en tu mes financiero · te avisamos un día antes y el mismo día</small></div>
+  ${grp('Atrasados', act.filter(s => s.next < TODAY))}${grp('Próximos 7 días', act.filter(s => s.next >= TODAY && s.next <= wk))}
+  ${grp('Más adelante', act.filter(s => s.next > wk))}${grp('Pausados o terminados', S.scheduled.filter(s => !s.active))}
+  ${S.scheduled.length ? '' : `<div class="empty" style="margin-top:14px">Programa la luz, el agua, el internet, la renta, el colegio o tus suscripciones y nunca se te pasa una fecha.${S.v06 && writableAccounts().length ? '<br><button class="btn sm" style="margin:12px auto 0" data-a="schNew">Programar mi primer pago</button>' : ''}</div>`}`;
+}
+function schCatOpts(a, sel){
+  if (!a) return '';
+  const sc = a.shared ? 'f' : 'p';
+  return S.categories.filter(c => c.scope === sc && c.kind !== 'income' && !c.archived)
+    .map(c => `<option value="${c.id}" ${sel === c.id ? 'selected' : ''}>${esc(c.icon)} ${esc(c.parent ? cat(c.parent).name + ' › ' : '')}${esc(c.name)}</option>`).join('');
+}
+function schForm(id){
+  const s = id ? S.scheduled.find(x => x.id === id) : null, accs = writableAccounts();
+  const a0 = (s && accs.find(a => a.id === s.acc)) || accs.find(a => !a.shared) || accs[0];
+  openSheet(`${sheetHead(s ? 'Editar pago' : 'Nuevo pago programado')}<form class="form" data-f="sched" data-id="${id || ''}" novalidate>
+    <div class="field"><label for="sp-n">Nombre</label><input class="inp" id="sp-n" maxlength="60" value="${esc(s?.name || '')}" placeholder="Ej: Luz ENEE, Internet, Renta"></div>
+    <div class="row2"><div class="field"><label for="sp-a">Monto</label><input class="inp" id="sp-a" inputmode="decimal" value="${s ? s.amount : ''}" placeholder="850"></div>
+    <div class="field"><label for="sp-f">Frecuencia</label><select class="inp" id="sp-f">${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${(s ? s.freq : 'monthly') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+    <div class="field"><label for="sp-ac">Se paga desde</label><select class="inp" id="sp-ac" data-in="schAcc">${accs.map(a => `<option value="${a.id}" ${a0 && a0.id === a.id ? 'selected' : ''}>${esc(a.icon)} ${esc(a.name)}${a.shared ? ' · Familia' : ''}</option>`).join('')}</select></div>
+    <div class="field"><label for="sp-c">Categoría</label><select class="inp" id="sp-c">${schCatOpts(a0, s?.cat)}</select></div>
+    <div class="row2"><div class="field"><label for="sp-d">${s ? 'Próxima fecha' : 'Primera fecha'}</label><input class="inp" id="sp-d" type="date" value="${s ? s.next : addDays(TODAY, 1)}"></div>
+    <div class="field"><label for="sp-e">Termina (opcional)</label><input class="inp" id="sp-e" type="date" value="${s?.end || ''}"></div></div>
+    <div class="toggle"><div class="t"><b>Avisarme un día antes</b></div><label class="sw"><input type="checkbox" id="sp-b" ${!s || s.before ? 'checked' : ''}><span></span></label></div>
+    <div class="toggle"><div class="t"><b>Avisarme el mismo día</b></div><label class="sw"><input type="checkbox" id="sp-s" ${!s || s.same ? 'checked' : ''}><span></span></label></div>
+    <div class="err" id="ferr"></div><button class="btn" type="submit">Guardar</button></form>`);
+}
+function schSheet(id){
+  const s = S.scheduled.find(x => x.id === id); if (!s) return;
+  const c = cat(s.cat), a = acc(s.acc), w = whenLabel(s.next), ed = canEditScope(s.scope) && !!a && canWriteAcc(a);
+  openSheet(`${sheetHead(esc(s.name))}
+    <div style="text-align:center;margin-bottom:14px"><span class="tile" style="margin:0 auto 8px;width:56px;height:56px;font-size:26px;background:${soft(c.color)};color:${c.color}">${esc(c.icon)}</span>
+      <div class="num" style="font-size:30px;font-weight:700">${money(s.amount, a?.cur)}</div>
+      <span class="pill ${s.active ? w.c : 'mute'}" style="text-transform:none">${s.active ? `${w.t} · ${dLong(s.next)}` : 'Pausado'}</span></div>
+    <div class="panel"><table class="rep"><tr><td class="muted">Frecuencia</td><td class="r">${FREQ[s.freq]}</td></tr>
+      <tr><td class="muted">Cuenta</td><td class="r">${esc(a?.name || '—')}</td></tr><tr><td class="muted">Categoría</td><td class="r">${esc(c.icon)} ${esc(c.name)}</td></tr>
+      ${s.end ? `<tr><td class="muted">Hasta</td><td class="r">${dShort(s.end)} ${s.end.slice(0, 4)}</td></tr>` : ''}
+      <tr><td class="muted">Avisos</td><td class="r">${[s.before && 'Un día antes', s.same && 'El mismo día'].filter(Boolean).join(' y ') || 'Sin aviso'}</td></tr></table></div>
+    ${ed && s.active ? `<form class="form" data-f="schPay" data-id="${s.id}" style="margin-top:14px" novalidate>
+      <div class="row2"><div class="field"><label for="sp-pa">Monto pagado</label><input class="inp" id="sp-pa" inputmode="decimal" value="${s.amount}"></div>
+      <div class="field"><label for="sp-pd">Fecha</label><input class="inp" id="sp-pd" type="date" value="${s.next <= TODAY ? s.next : TODAY}" max="${TODAY}"></div></div>
+      <div class="err" id="ferr"></div>
+      <button class="btn" type="submit">${ic('check','sm')} Registrar pago</button>
+      <button type="button" class="btn ghost" data-a="schSkip" data-v="${s.id}">${s.freq === 'once' ? 'Ya lo registré · terminar' : 'Ya lo registré · pasar al siguiente'}</button></form>` : ''}
+    ${ed ? `<div class="row2" style="margin-top:10px"><button class="btn ghost" data-a="schEdit" data-v="${s.id}">Editar</button><button class="btn ghost" data-a="schToggle" data-v="${s.id}">${s.active ? 'Pausar' : 'Reanudar'}</button></div>
+      <div id="schdel" style="margin-top:10px"><button class="btn danger" data-a="schAskDel" data-v="${s.id}">${ic('trash','sm')} Eliminar</button></div>`
+      : '<div class="note" style="margin-top:12px">Tu rol no permite modificar este pago.</div>'}`);
+}
+/* Pasa al siguiente vencimiento; si ya no hay más (una sola vez o pasó la fecha final), lo termina */
+async function schAdvance(s){
+  const nn = s.freq === 'once' ? null : nextOcc(s), done = !nn || (s.end && nn > s.end);
+  await q(sb.from('scheduled_payments').update(done ? {is_active:false} : {next_date:nn}).eq('id', s.id));
+  if (done) s.active = false; else s.next = nn;
+  sortSch();
+  return done ? null : nn;
+}
+
+/* ============ deudas ============ */
+const DEBT_KINDS = {prestamo:['🏦','Préstamo bancario'], tarjeta:['💳','Tarjeta de crédito'], hipoteca:['🏠','Hipoteca'], vehiculo:['🚗','Préstamo de vehículo'],
+  personal:['🤝','Préstamo personal o familiar'], cooperativa:['🏛️','Cooperativa'], otro:['📄','Otra deuda']};
+const mRate = d => d.rate / 1200;
+const annuity = (B, r, n) => n > 0 ? (r ? B * r / (1 - Math.pow(1 + r, -n)) : B / n) : 0;
+const flatPay = (orig, r, n) => orig / n + orig * r;
+const debtBal = d => Math.max(0, round2(d.bal0 - d.pays.reduce((s, p) => s + p.principal, 0)));
+function debtPay(d){
+  if (d.inst) return d.inst;
+  if (d.term) return round2(d.rtype === 'flat' ? flatPay(d.orig, mRate(d), d.term) : annuity(d.orig, mRate(d), d.term));
+  return round2(Math.max(debtBal(d) * 0.05, 100));
+}
+// Interés de un mes: sobre el saldo, o sobre el monto prestado si es flat
+const debtInt = (d, B) => round2(d.rtype === 'flat' ? d.orig * mRate(d) : B * mRate(d));
+function simulate(d, B, pay, extra = 0){
+  const rows = []; let tot = 0, m = 0;
+  while (B > 0.005 && m < 600){
+    const i = debtInt(d, B), p = pay + extra;
+    if (p <= i) return {ok:false, months:Infinity, interest:Infinity, rows, i};
+    const pr = Math.min(B, p - i); B = round2(B - pr); tot += i; m++;
+    rows.push({m, pay:round2(pr + i), i, pr:round2(pr), B});
+  }
+  return {ok:B <= 0.005, months:m, interest:round2(tot), rows};
+}
+/* Saldo estimado de un préstamo que ya tiene k cuotas pagadas */
+function estBalance(orig, r, n, pay, k, flat){
+  if (n) k = Math.min(k, n);
+  if (flat) return Math.max(0, round2(orig - (n ? orig / n : pay - orig * r) * k));
+  let B = orig; for (let i = 0; i < k && B > 0; i++) B = B * (1 + r) - pay;
+  return Math.max(0, round2(B));
+}
+/* Próxima cuota según el día de pago. Una cuota cuenta como pagada si hubo un pago en los 20 días previos (o después). */
+function debtDue(d){
+  if (!d.payDay || d.status !== 'active') return null;
+  const ym = TODAY.slice(0, 7), last = d.pays.length ? d.pays[d.pays.length - 1].date : null;
+  for (const k of [-1, 0, 1, 2]){
+    const x = dayIn(ymAdd(ym, k), d.payDay);
+    if (x < d.from || (last && last > addDays(x, -20))) continue;
+    return x;
+  }
+  return null;
+}
+function debtInfo(d){
+  const bal = debtBal(d), pay = debtPay(d), sim = simulate(d, bal, pay);
+  return {bal, pay, sim, pct:Math.max(0, Math.min(100, (1 - bal / d.orig) * 100)), due:bal > 0 ? debtDue(d) : null};
+}
+/* Varias deudas a la vez: cada una paga su cuota; el extra (y las cuotas que se liberan) van a la prioritaria */
+function planDebts(debts, extra, method){
+  const ds = debts.map(d => ({d, B:debtBal(d), pay:debtPay(d), at:0})).filter(x => x.B > 0.005);
+  const budget = ds.reduce((s, x) => s + x.pay, 0) + extra, order = [];
+  let m = 0, tot = 0;
+  while (ds.some(x => x.B > 0.005) && m < 600){
+    m++; let avail = budget;
+    for (const x of ds) if (x.B > 0.005){ const i = debtInt(x.d, x.B); x.B += i; tot += i; }
+    for (const x of ds) if (x.B > 0.005){ const p = Math.min(x.pay, x.B, avail); x.B -= p; avail -= p; }
+    ds.filter(x => x.B > 0.005).sort(method === 'avalanche' ? (a, b) => b.d.rate - a.d.rate || a.B - b.B : (a, b) => a.B - b.B)
+      .forEach(x => { const p = Math.min(avail, x.B); x.B -= p; avail -= p; });
+    ds.forEach(x => { if (x.B <= 0.005 && !x.at){ x.B = 0; x.at = m; order.push(x); } });
+  }
+  return {ok:ds.every(x => x.B <= 0.005), months:m, interest:round2(tot), order};
+}
+function debtTips(act, infos, st){
+  const t = [], live = act.filter(d => infos.get(d.id).bal > 0); if (!live.length) return t;
+  const top = [...live].sort((a, b) => b.rate - a.rate)[0], ti = infos.get(top.id);
+  if (live.length > 1 && top.rate > 0) t.push(['🎯', `Pon cada lempira extra en <b>${esc(top.name)}</b>: con ${fmtRate(top.rate)} anual es la que más te cuesta. A las demás, solo su cuota.`]);
+  if (ti.sim.ok && top.rate > 0){
+    const x = roundTo(ti.pay * 0.1, 50), s = simulate(top, ti.bal, ti.pay, x);
+    if (s.ok && ti.sim.months - s.months >= 1) t.push(['💡', `Si a <b>${esc(top.name)}</b> le abonas ${money(x, top.cur)} más al mes, terminas <b>${ti.sim.months - s.months} ${ti.sim.months - s.months === 1 ? 'mes' : 'meses'} antes</b> y te ahorras <b>${money(ti.sim.interest - s.interest, top.cur)}</b> en intereses.`]);
+    const bw = simulate(top, ti.bal, ti.pay, ti.pay / 12);
+    if (top.kind !== 'tarjeta' && bw.ok && ti.sim.months - bw.months >= 1) t.push(['📅', `Paga media cuota cada quincena (${money(ti.pay / 2, top.cur)}): al año harás una cuota extra sin sentirlo. En <b>${esc(top.name)}</b> son ${ti.sim.months - bw.months} meses menos y ${money(ti.sim.interest - bw.interest, top.cur)} de ahorro (confirma con tu banco que el abono va a capital).`]);
+    const lump = simulate(top, ti.bal, ti.pay, ti.pay * 2 / 12);
+    if (lump.ok && ti.sim.interest - lump.interest > 100) t.push(['🎁', `Abona a capital una cuota de tu <b>décimo cuarto mes</b> (junio) y otra de tu <b>aguinaldo</b> (diciembre): te ahorras cerca de ${money(ti.sim.interest - lump.interest, top.cur)}.`]);
+  }
+  live.filter(d => d.kind === 'tarjeta' && d.rate >= 30).forEach(d => t.push(['💳', `Tu tarjeta <b>${esc(d.name)}</b> cobra ${fmtRate(d.rate)} al año. No pagues solo el mínimo y no la uses mientras la bajas.`]));
+  const big = live.find(d => d.rate > 30 && infos.get(d.id).sim.ok && infos.get(d.id).bal >= 10000);
+  if (big){ const i = infos.get(big.id), alt = simulate({...big, rate:22, rtype:'saldo'}, i.bal, i.pay);
+    if (alt.ok && i.sim.interest - alt.interest > 1000) t.push(['🏦', `Si consolidas <b>${esc(big.name)}</b> a 22% anual pagando la misma cuota, te ahorrarías cerca de ${money(i.sim.interest - alt.interest, big.cur)}. Pregunta en tu banco o cooperativa y revisa las comisiones.`]); }
+  if (live.length > 1){ const sm = [...live].sort((a, b) => infos.get(a.id).bal - infos.get(b.id).bal)[0];
+    if (sm.id !== top.id) t.push(['❄️', `¿Necesitas motivación? <b>${esc(sm.name)}</b> es la más pequeña (${money(infos.get(sm.id).bal, sm.cur)}). Liquidarla primero te da una victoria rápida y liberas su cuota.`]); }
+  if (st.inc > 0){ const r = live.filter(d => d.cur === 'HNL').reduce((s, d) => s + infos.get(d.id).pay, 0) / st.inc * 100;
+    if (r >= 40) t.push(['⚠️', `Tus cuotas se llevan el <b>${Math.round(r)}%</b> de tus ingresos. Evita deudas nuevas hasta bajar del 30%.`]);
+    else if (r > 0 && r < 20) t.push(['✅', `Tus cuotas son el ${Math.round(r)}% de tus ingresos: un nivel sano. ¡Sigue así!`]); }
+  if (live.some(d => !infos.get(d.id).sim.ok)) t.push(['🚨', 'Hay una deuda cuya cuota no alcanza ni para los intereses: el saldo nunca baja. Habla con tu acreedor para reestructurarla.']);
+  return t;
+}
+function debtRow(d, i){
+  const w = i.due ? whenLabel(i.due) : null;
+  return `<button class="bud" data-a="debtOpen" data-v="${d.id}">
+    <div class="h"><span class="tile" style="background:var(--neg-soft)">${esc(d.icon)}</span>
+    <span class="t"><b>${esc(d.name)}</b><small class="num">Debes ${money(i.bal, d.cur)}${d.rate ? ` · ${fmtRate(d.rate)} anual` : ''}</small></span>
+    ${d.status === 'paid' ? '<span class="pill ok">Liquidada</span>' : w ? `<span class="pill ${w.c}">${w.t}</span>` : ''}</div>
+    <div class="bar"><i class="brand" style="width:${i.pct}%"></i></div>
+    <small class="muted" style="font-size:12px">${Math.round(i.pct)}% pagado${i.bal > 0 ? ` · cuota ${money(i.pay, d.cur)}${i.sim.ok ? ` · libre en ${monthLabel(addMonths(TODAY, i.sim.months))}` : ''}` : ''}</small></button>`;
+}
+function vDebts(){
+  const infos = new Map(S.debts.map(d => [d.id, debtInfo(d)]));
+  const act = S.debts.filter(d => d.status === 'active'), paid = S.debts.filter(d => d.status === 'paid');
+  const hn = act.filter(d => d.cur === 'HNL' && infos.get(d.id).bal > 0), st = moneyStats();
+  const total = hn.reduce((s, d) => s + infos.get(d.id).bal, 0), monthly = hn.reduce((s, d) => s + infos.get(d.id).pay, 0);
+  const allOk = hn.every(d => infos.get(d.id).sim.ok);
+  const base = {ok:allOk && hn.length > 0, months:hn.length ? Math.max(...hn.map(d => infos.get(d.id).sim.months)) : 0, interest:hn.reduce((s, d) => s + infos.get(d.id).sim.interest, 0)};
+  let strat = '';
+  if (hn.length){
+    const extra = S.ui.debtExtra ?? roundTo(monthly * 0.1 || 500, 50);
+    const av = planDebts(hn, extra, 'avalanche'), sn = planDebts(hn, extra, 'snowball');
+    const best = av.ok && (!sn.ok || av.interest <= sn.interest) ? 'av' : 'sn', plan = best === 'av' ? av : sn;
+    const cell = (k, t, r) => `<div class="${best === k ? 'best' : ''}"><small>${t}</small><b>${r.ok ? `${r.months} ${r.months === 1 ? 'mes' : 'meses'}` : '—'}</b><small>${r.ok ? 'Intereses ' + short(r.interest) : 'No alcanza'}</small></div>`;
+    strat = `<div class="section"><div class="sec-h"><h2>Sal de deudas más rápido</h2></div><div class="panel form">
+      <div class="field"><label for="dx">Si cada mes pones extra (L)</label><input class="inp" id="dx" inputmode="decimal" value="${extra}" data-in="debtExtra"></div>
+      <div class="cmp">${cell('base', 'Solo cuotas', base)}${cell('av', 'Avalancha', av)}${cell('sn', 'Bola de nieve', sn)}</div>
+      ${base.ok && plan.ok && base.months > plan.months ? `<div class="ok-msg">Con ${money(extra)} extra terminas ${base.months - plan.months} meses antes y ahorras ${money(Math.max(0, base.interest - plan.interest))} en intereses.</div>` : ''}
+      <div class="note"><b>Avalancha:</b> el extra va a la deuda con la tasa más alta: pagas menos intereses. <b>Bola de nieve:</b> va a la más pequeña: ganas motivación. Al terminar una, su cuota pasa a la siguiente.</div>
+      ${plan.ok && hn.length > 1 ? `<div class="eyebrow">Orden recomendado (${best === 'av' ? 'avalancha' : 'bola de nieve'})</div><div class="list">${plan.order.map((o, k) =>
+        `<div class="tx"><span class="tile" style="background:var(--surface-2);font-family:var(--f-display);font-weight:700">${k + 1}</span><span class="mid"><b>${esc(o.d.name)}</b><small>Liquidada en ${monthLabel(addMonths(TODAY, o.at))}</small></span></div>`).join('')}</div>` : ''}
+    </div></div>`;
+  }
+  const tips = debtTips(act, infos, st);
+  return `${subhead('Deudas', S.v06 ? `<button class="btn sm" data-a="debtNew">${ic('plus','sm')} Nueva</button>` : '')}${needs06()}
+  ${hn.length ? `<div class="hero debt"><div class="eyebrow">Total que debes</div><div class="num" style="font-size:32px;font-weight:700">${money(total)}</div>
+    <small>${hn.length} ${hn.length === 1 ? 'deuda' : 'deudas'} · cuotas de ${money(monthly)} al mes</small>
+    <div class="row3"><div><small>Libre de deudas</small><b>${base.ok ? monthLabel(addMonths(TODAY, base.months)) : '—'}</b></div>
+      <div><small>Intereses por pagar</small><b>${base.ok ? money(base.interest) : '—'}</b></div>
+      ${st.inc > 0 ? `<div><small>De tu ingreso</small><b>${Math.round(monthly / st.inc * 100)}%</b></div>` : ''}</div></div>`
+    : `<div class="empty">${act.length ? '¡No tienes saldos pendientes! 🎉' : 'Agrega tus préstamos, tarjetas o deudas con familiares. Puedes incluir los que ya llevas tiempo pagando: calculamos tu saldo, tus intereses y cuándo quedas libre.'}${S.v06 && !act.length ? '<br><button class="btn sm" style="margin:12px auto 0" data-a="debtNew">Agregar mi primera deuda</button>' : ''}</div>`}
+  ${act.length ? `<div class="section"><div class="sec-h"><h2>Activas</h2></div><div class="list">${act.map(d => debtRow(d, infos.get(d.id))).join('')}</div></div>` : ''}
+  ${act.some(d => d.cur === 'USD') ? '<div class="note" style="margin-top:10px">Las deudas en dólares se muestran aparte y no entran en el total en lempiras.</div>' : ''}
+  ${strat}
+  ${tips.length ? `<div class="section"><div class="sec-h"><h2>Sugerencias para ti</h2></div><div class="tips">${tips.map(([e, h]) => `<div class="tip"><span>${e}</span><div>${h}</div></div>`).join('')}</div></div>` : ''}
+  ${paid.length ? `<div class="section"><div class="sec-h"><h2>Liquidadas 🎉</h2></div><div class="list">${paid.map(d => debtRow(d, infos.get(d.id))).join('')}</div></div>` : ''}`;
+}
+function amortTable(rows, d, from){
+  const lbl = m => { const x = dayIn(ymAdd(from.slice(0, 7), m - 1), +from.slice(8)); return `${mon(x)} ${x.slice(0, 4)}`; };
+  return `<table class="rep" style="min-width:330px"><tr><th>Mes</th><th class="r">Cuota</th><th class="r">Interés</th><th class="r">Capital</th><th class="r">Saldo</th></tr>
+    ${rows.map(r => `<tr><td style="text-transform:capitalize;white-space:nowrap">${lbl(r.m)}</td><td class="r">${nf.format(r.pay)}</td><td class="r neg">${nf.format(r.i)}</td><td class="r">${nf.format(r.pr)}</td><td class="r">${nf.format(r.B)}</td></tr>`).join('')}</table>
+    <div class="muted" style="font-size:11.5px;margin-top:6px">Montos en ${d.cur === 'USD' ? 'dólares' : 'lempiras'}. Es una estimación: tu banco puede calcular con días exactos, seguros o comisiones.</div>`;
+}
+function vDebt(){
+  const d = S.debts.find(x => x.id === S.ui.debtId);
+  if (!d){ S.ui.screen = 'debts'; return vDebts(); }
+  const i = debtInfo(d), K = DEBT_KINDS[d.kind] || DEBT_KINDS.otro, w = i.due ? whenLabel(i.due) : null;
+  const paidTot = d.pays.reduce((s, p) => s + p.amount, 0), paidInt = d.pays.reduce((s, p) => s + p.interest, 0);
+  const elapsed = monthsBetween(d.start, TODAY);
+  return `${subhead(esc(d.name))}
+  <div class="hero debt"><div class="eyebrow">${K[0]} ${K[1]}${d.lender ? ' · ' + esc(d.lender) : ''}</div>
+    <div class="num" style="font-size:32px;font-weight:700;margin-top:4px">${money(i.bal, d.cur)}</div><small>Saldo pendiente de ${money(d.orig, d.cur)} · ${Math.round(i.pct)}% pagado</small>
+    <div class="bar" style="margin-top:10px;background:rgba(255,255,255,.22)"><i style="width:${i.pct}%;background:#fff"></i></div>
+    <div class="row3"><div><small>Cuota</small><b>${money(i.pay, d.cur)}</b></div><div><small>Tasa anual</small><b>${fmtRate(d.rate)}${d.rtype === 'flat' ? ' flat' : ''}</b></div>
+      <div><small>Libre en</small><b>${i.bal <= 0 ? '¡Ya!' : i.sim.ok ? monthLabel(addMonths(TODAY, i.sim.months)) : '—'}</b></div></div></div>
+  ${w ? `<div class="panel" style="margin-top:12px;display:flex;align-items:center;gap:10px"><span class="tile" style="background:var(--warn-soft);color:var(--warn)">${ic('calendar','sm')}</span>
+    <div style="flex:1;min-width:0"><b>Próxima cuota</b><small class="muted" style="display:block">${dLong(i.due)}</small></div><span class="pill ${w.c}">${w.t}</span></div>` : ''}
+  ${i.bal > 0 ? `<div class="row2" style="margin-top:12px"><button class="btn" data-a="debtPayNew" data-v="${d.id}">${ic('check','sm')} Registrar pago</button><button class="btn ghost" data-a="debtSim" data-v="${d.id}">${ic('chart','sm')} Simular</button></div>` : ''}
+  ${!i.sim.ok && i.bal > 0 ? `<div class="note" style="margin-top:12px;background:var(--neg-soft);color:var(--neg)">Con una cuota de ${money(i.pay, d.cur)} no cubres ni los intereses (${money(debtInt(d, i.bal), d.cur)} al mes): el saldo nunca baja. Sube el pago o habla con tu acreedor.</div>` : ''}
+  <div class="section panel"><table class="rep">
+    ${i.bal > 0 && i.sim.ok ? `<tr><td class="muted">Te faltan</td><td class="r">${i.sim.months} ${i.sim.months === 1 ? 'cuota' : 'cuotas'} aprox.</td></tr><tr><td class="muted">Intereses por pagar</td><td class="r neg">${money(i.sim.interest, d.cur)}</td></tr>` : ''}
+    <tr><td class="muted">Pagado en Kuenta</td><td class="r">${money(paidTot, d.cur)}${paidInt ? ` <small class="muted">(${money(paidInt, d.cur)} de intereses)</small>` : ''}</td></tr>
+    <tr><td class="muted">Fecha del préstamo</td><td class="r">${dShort(d.start)} ${d.start.slice(0, 4)}${elapsed ? ` · hace ${elapsed} ${elapsed === 1 ? 'mes' : 'meses'}` : ''}</td></tr>
+    ${d.term ? `<tr><td class="muted">Plazo</td><td class="r">${d.term} meses</td></tr>` : ''}
+    <tr><td class="muted">Día de pago</td><td class="r">${d.payDay ? 'Día ' + d.payDay : 'Sin día fijo'}</td></tr>
+    ${d.notes ? `<tr><td class="muted">Notas</td><td class="r" style="white-space:normal">${esc(d.notes)}</td></tr>` : ''}</table></div>
+  ${i.bal > 0 && i.sim.ok ? `<div class="section"><div class="sec-h"><h2>Próximas cuotas</h2><button class="link" data-a="debtSim" data-v="${d.id}">Plan completo</button></div>
+    <div class="panel" style="overflow-x:auto">${amortTable(i.sim.rows.slice(0, 6), d, i.due || addMonths(TODAY, 1))}</div></div>` : ''}
+  <div class="section"><div class="sec-h"><h2>Pagos registrados</h2></div><div class="list">${[...d.pays].reverse().map(p => `<div class="tx">
+    <span class="tile" style="background:var(--pos-soft);color:var(--pos)">${ic('check','sm')}</span>
+    <span class="mid"><b>${money(p.amount, d.cur)}${p.extra ? ' · abono extra' : ''}</b><small>${dShort(p.date)} ${p.date.slice(0, 4)} · capital ${money(p.principal, d.cur)} · interés ${money(p.interest, d.cur)}</small></span>
+    <button class="iconbtn" data-a="debtPayDel" data-v="${p.id}" data-d="${d.id}" aria-label="Eliminar pago" style="color:var(--neg)">${ic('trash','sm')}</button></div>`).join('') || '<div class="empty">Aún no registras pagos de esta deuda.</div>'}</div></div>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px"><button class="btn ghost" data-a="debtEdit" data-v="${d.id}">Editar deuda</button>
+    <div id="debtdel"><button class="btn danger" data-a="debtAskDel" data-v="${d.id}">${ic('trash','sm')} Eliminar deuda</button></div></div>`;
+}
+function debtForm(id){
+  const d = id ? S.debts.find(x => x.id === id) : null, old = !!d && (d.start < d.from || d.bal0 !== d.orig);
+  S.form = {est:null};
+  openSheet(`${sheetHead(d ? 'Editar deuda' : 'Nueva deuda')}<form class="form" data-f="debt" data-id="${id || ''}" novalidate>
+    <div class="row2"><div class="field"><label for="db-k">Tipo</label><select class="inp" id="db-k">${Object.entries(DEBT_KINDS).map(([k, [e, l]]) => `<option value="${k}" ${(d ? d.kind : 'prestamo') === k ? 'selected' : ''}>${e} ${l}</option>`).join('')}</select></div>
+    <div class="field"><label for="db-c">Moneda</label><select class="inp" id="db-c" data-in="debtCalc"><option value="HNL">Lempiras</option><option value="USD" ${d?.cur === 'USD' ? 'selected' : ''}>Dólares</option></select></div></div>
+    <div class="field"><label for="db-n">Nombre</label><input class="inp" id="db-n" maxlength="60" value="${esc(d?.name || '')}" placeholder="Ej: Préstamo carro, Tarjeta BAC"></div>
+    <div class="field"><label for="db-l">¿A quién le debes? (opcional)</label><input class="inp" id="db-l" maxlength="60" value="${esc(d?.lender || '')}" placeholder="Banco, cooperativa o persona"></div>
+    <div class="row2"><div class="field"><label for="db-o">Monto prestado</label><input class="inp" id="db-o" inputmode="decimal" value="${d ? d.orig : ''}" placeholder="50000" data-in="debtCalc"></div>
+    <div class="field"><label for="db-r">Tasa anual (%)</label><input class="inp" id="db-r" inputmode="decimal" value="${d ? d.rate : ''}" placeholder="18" data-in="debtCalc"></div></div>
+    <div class="field"><label for="db-rt">Cómo cobran el interés</label><select class="inp" id="db-rt" data-in="debtCalc"><option value="saldo">Sobre el saldo (lo más común)</option><option value="flat" ${d?.rtype === 'flat' ? 'selected' : ''}>Flat: siempre sobre el monto prestado</option></select></div>
+    <div class="row2"><div class="field"><label for="db-t">Plazo (meses)</label><input class="inp" id="db-t" inputmode="numeric" value="${d?.term || ''}" placeholder="36" data-in="debtCalc"></div>
+    <div class="field"><label for="db-i">Cuota mensual</label><input class="inp" id="db-i" inputmode="decimal" value="${d?.inst || ''}" placeholder="La calculamos" data-in="debtCalc"></div></div>
+    <div class="field"><label for="db-pd">Día de pago</label><select class="inp" id="db-pd"><option value="">Sin día fijo</option>${Array.from({length:31}, (_, i) => `<option value="${i + 1}" ${d?.payDay === i + 1 ? 'selected' : ''}>Día ${i + 1} de cada mes</option>`).join('')}</select></div>
+    <div class="toggle"><div class="t"><b>Ya llevo tiempo pagándola</b><small>Para préstamos o tarjetas que tienen meses o años</small></div><label class="sw"><input type="checkbox" id="db-old" data-in="debtCalc" ${old ? 'checked' : ''}><span></span></label></div>
+    <div id="db-oldbox" class="row2" ${old ? '' : 'hidden'}><div class="field"><label for="db-sd">Fecha del préstamo</label><input class="inp" id="db-sd" type="date" max="${TODAY}" value="${old ? d.start : ''}" data-in="debtCalc"></div>
+      <div class="field"><label for="db-b">${d ? 'Saldo al empezar en Kuenta' : 'Saldo actual'}</label><input class="inp" id="db-b" inputmode="decimal" value="${old ? d.bal0 : ''}" placeholder="Lo estimamos"></div></div>
+    <div class="note" id="db-hint" hidden></div>
+    <div class="field"><label for="db-no">Notas (opcional)</label><input class="inp" id="db-no" maxlength="300" value="${esc(d?.notes || '')}" placeholder="Ej: incluye seguro de vida"></div>
+    <div class="err" id="ferr"></div><button class="btn" type="submit">${d ? 'Guardar cambios' : 'Agregar deuda'}</button></form>`);
+  debtCalcHint();
+}
+function debtCalcHint(){
+  const box = $('#db-hint'); if (!box) return;
+  const cur = $('#db-c').value, orig = parseAmt($('#db-o').value), r = (parseAmt($('#db-r').value) || 0) / 1200, n = parseInt($('#db-t').value, 10) || 0;
+  const inst = parseAmt($('#db-i').value) || 0, flat = $('#db-rt').value === 'flat', old = $('#db-old').checked, h = [];
+  $('#db-oldbox').hidden = !old; S.form.est = null;
+  const calc = orig > 0 && n > 0 ? (flat ? flatPay(orig, r, n) : annuity(orig, r, n)) : 0;
+  if (calc) h.push(`Cuota calculada: <b>${money(calc, cur)}</b>${inst && Math.abs(inst - calc) > 1 ? '. Usaremos la que escribiste (puede incluir seguros).' : '.'}`);
+  if (old && orig > 0){
+    const sd = $('#db-sd').value, pay = inst || calc;
+    if (sd && sd < TODAY && pay){
+      const k = monthsBetween(sd, TODAY), est = estBalance(orig, r, n, pay, k, flat); S.form.est = est;
+      h.push(`Llevas unas <b>${n ? Math.min(k, n) : k}</b> cuotas${n ? ` de ${n}` : ''}. Saldo estimado hoy: <b>${money(est, cur)}</b>. <button type="button" class="link" data-a="useEst">Usar este saldo</button><br><small>Si tienes el estado de cuenta, escribe el saldo exacto.</small>`);
+    } else if (!sd) h.push('Elige la fecha del préstamo y estimamos cuánto te falta.');
+  }
+  box.innerHTML = h.join('<br>'); box.hidden = !h.length;
+}
+function debtPaySheet(id){
+  const d = S.debts.find(x => x.id === id), B = debtBal(d), accs = writableAccounts().filter(a => a.cur === d.cur);
+  const recent = d.pays.some(p => !p.extra && p.date > addDays(TODAY, -20)), a0 = accs.find(a => a.id === d.acc) || accs.find(a => !a.shared) || accs[0];
+  S.form = {debt:id, iTouched:false};
+  openSheet(`${sheetHead('Pago de ' + esc(d.name))}<form class="form" data-f="debtPay" data-id="${id}" novalidate>
+    <div class="note">Debes ${money(B, d.cur)}. ${recent ? 'Ya registraste una cuota en los últimos días: este pago irá completo a capital salvo que indiques intereses.' : `Interés estimado de este mes: ${money(Math.min(B, debtInt(d, B)), d.cur)}.`}</div>
+    <div class="row2"><div class="field"><label for="dp-a">Monto pagado</label><input class="inp" id="dp-a" inputmode="decimal" value="${Math.min(debtPay(d), round2(B + debtInt(d, B)))}" data-in="dpCalc"></div>
+    <div class="field"><label for="dp-d">Fecha</label><input class="inp" id="dp-d" type="date" value="${TODAY}" max="${TODAY}"></div></div>
+    <div class="toggle"><div class="t"><b>Abono extra a capital</b><small>Todo el monto baja tu saldo, sin intereses</small></div><label class="sw"><input type="checkbox" id="dp-x" data-in="dpCalc"><span></span></label></div>
+    <div class="field" id="dp-ibox"><label for="dp-i">De eso, intereses (según tu banco)</label><input class="inp" id="dp-i" inputmode="decimal" value="${recent ? 0 : Math.min(B, debtInt(d, B))}" data-in="dpInt"></div>
+    <div class="note" id="dp-prev"></div>
+    <div class="toggle"><div class="t"><b>Registrarlo también como gasto</b><small>Descuenta el pago de una de tus cuentas</small></div><label class="sw"><input type="checkbox" id="dp-tx" data-in="dpCalc" ${accs.length ? 'checked' : 'disabled'}><span></span></label></div>
+    <div id="dp-txbox" class="row2" ${accs.length ? '' : 'hidden'}><div class="field"><label for="dp-ac">Cuenta</label><select class="inp" id="dp-ac" data-in="dpAcc">${accs.map(a => `<option value="${a.id}" ${a0 && a0.id === a.id ? 'selected' : ''}>${esc(a.icon)} ${esc(a.name)}</option>`).join('')}</select></div>
+      <div class="field"><label for="dp-c">Categoría</label><select class="inp" id="dp-c">${debtCatOpts(a0, d)}</select></div></div>
+    <div class="err" id="ferr"></div><button class="btn" type="submit">${ic('check','sm')} Guardar pago</button></form>`);
+  dpPreview();
+}
+function debtCatOpts(a, d){
+  if (!a) return '';
+  const sc = a.shared ? 'f' : 'p', cats = S.categories.filter(c => c.scope === sc && c.kind === 'expense' && !c.archived);
+  const pick = cats.find(c => c.id === d.cat) || cats.find(c => /deud|préstam|prestam|crédit|credit|tarjeta|banco/i.test(c.name));
+  return `${pick ? '' : '<option value="">Elige una categoría</option>'}${cats.map(c => `<option value="${c.id}" ${pick && pick.id === c.id ? 'selected' : ''}>${esc(c.icon)} ${esc(c.parent ? cat(c.parent).name + ' › ' : '')}${esc(c.name)}</option>`).join('')}`;
+}
+function dpPreview(){
+  const d = S.debts.find(x => x.id === S.form.debt); if (!d || !$('#dp-a')) return;
+  const B = debtBal(d), amt = parseAmt($('#dp-a').value) || 0, extra = $('#dp-x').checked;
+  $('#dp-ibox').hidden = extra; $('#dp-txbox').hidden = !$('#dp-tx').checked;
+  const i = extra ? 0 : Math.min(amt, parseAmt($('#dp-i').value) || 0), pr = Math.min(B, Math.max(0, amt - i));
+  $('#dp-prev').innerHTML = amt > 0 ? `A capital <b>${money(pr, d.cur)}</b> · intereses <b>${money(i, d.cur)}</b> · saldo después <b>${money(B - pr, d.cur)}</b>${B - pr <= 0.005 ? ' 🎉' : ''}` : 'Escribe el monto que pagaste.';
+}
+function debtSimSheet(id){
+  const d = S.debts.find(x => x.id === id), i = debtInfo(d);
+  S.form = {debt:id};
+  openSheet(`${sheetHead('Simular plan de pagos')}<div class="note">${esc(d.name)}: saldo ${money(i.bal, d.cur)} · tasa ${fmtRate(d.rate)} anual${d.rtype === 'flat' ? ' flat' : ''}</div>
+    <div class="row2" style="margin-top:12px"><div class="field"><label for="sim-p">Cuota mensual</label><input class="inp" id="sim-p" inputmode="decimal" value="${i.pay}" data-in="simCalc"></div>
+    <div class="field"><label for="sim-x">Abono extra al mes</label><input class="inp" id="sim-x" inputmode="decimal" value="${roundTo(i.pay * 0.1, 50)}" data-in="simCalc"></div></div>
+    <div class="chips" style="margin-top:10px">${[0, 100, 250, 500, 1000, 2000].map(v => `<button type="button" class="chip" data-a="simQuick" data-v="${v}">${v ? '+' + short(v, d.cur) : 'Sin extra'}</button>`).join('')}</div>
+    <div id="simres" style="margin-top:12px"></div>`);
+  simRender();
+}
+function simRender(){
+  const d = S.debts.find(x => x.id === S.form.debt), box = $('#simres'); if (!d || !box) return;
+  const B = debtBal(d), pay = parseAmt($('#sim-p').value) || 0, x = parseAmt($('#sim-x').value) || 0;
+  const a = simulate(d, B, pay), b = simulate(d, B, pay, x), from = debtDue(d) || addMonths(TODAY, 1);
+  const cell = (t, r, best) => `<div class="${best ? 'best' : ''}"><small>${t}</small><b>${r.ok ? `${r.months} ${r.months === 1 ? 'mes' : 'meses'}` : 'Nunca'}</b><small>${r.ok ? `Fin ${monthLabel(addMonths(TODAY, r.months))}` : 'No cubre intereses'}</small><small>${r.ok ? 'Intereses ' + money(r.interest, d.cur) : ''}</small></div>`;
+  const win = a.ok && b.ok && x > 0 ? `<div class="ok-msg" style="margin-top:10px">Con ${money(x, d.cur)} extra terminas <b>${a.months - b.months} ${a.months - b.months === 1 ? 'mes' : 'meses'} antes</b> y te ahorras <b>${money(a.interest - b.interest, d.cur)}</b> en intereses. 🚀</div>`
+    : !a.ok && b.ok ? `<div class="ok-msg" style="margin-top:10px">Con el extra sí logras pagarla: ${b.months} meses.</div>` : '';
+  const rows = (x > 0 ? b : a).rows;
+  box.innerHTML = `<div class="cmp" style="grid-template-columns:1fr 1fr">${cell('Solo la cuota', a, false)}${cell(x > 0 ? `Con +${short(x, d.cur)} al mes` : 'Con extra', b, x > 0 && b.ok)}</div>${win}
+    ${rows.length ? `<div class="eyebrow" style="margin:16px 0 6px">Plan de pagos${x > 0 ? ' con el extra' : ''} · ${rows.length} cuotas</div>
+      <div class="panel" style="overflow:auto;max-height:340px">${amortTable(rows, d, from)}</div>` : ''}`;
+}
+
+/* ============ ahorro inteligente ============ */
+/* Promedio de los últimos 3 meses financieros con movimientos (si eres nuevo, usa el mes actual) */
+function moneyStats(){
+  const cur = period(), months = [];
+  for (let i = 1; i <= 3; i++){ const p = period(addMonths(cur.start, -i)); months.push(summary(p.start, p.end, 'personal')); }
+  let use = months.filter(m => m.inc > 0 || m.exp > 0);
+  if (!use.length) use = [summary(cur.start, cur.end, 'personal')];
+  const avg = k => use.reduce((s, m) => s + m[k], 0) / use.length;
+  const inc = avg('inc'), exp = avg('exp'), gen = avg('gen');
+  return {inc, exp, gen, n:use.length, rate:inc > 0 ? (inc - exp - gen) / inc * 100 : null};
+}
+function savingsPlan(st){
+  if (!(st.inc > 0)) return {monthly:0};
+  const free = st.inc - st.exp - st.gen;
+  let m = free > 0 ? Math.min(Math.max(free * 0.6, st.inc * 0.05), st.inc * 0.25) : st.inc * 0.05;
+  m = roundTo(m, m >= 1000 ? 100 : 50);
+  return {monthly:m, free, pct:m / st.inc * 100, daily:m / 30, tight:free <= 0};
+}
+const dailyLike = d => d <= 35 ? 'menos que una baleada con todo 🌮' : d <= 70 ? 'lo que cuesta un almuerzo corriente 🍛' : d <= 150 ? 'menos que un delivery de pizza 🍕' : 'lo que cuesta una salida al cine 🎬';
+const LEVELS = [{min:0, e:'🌱', n:'Semilla'}, {min:5, e:'🐜', n:'Hormiguita'}, {min:10, e:'🐿️', n:'Ardilla'}, {min:20, e:'🦉', n:'Búho sabio'}, {min:30, e:'🦁', n:'León del ahorro'}];
+function levelFor(rate){
+  const r = Math.max(0, rate ?? 0); let i = 0;
+  LEVELS.forEach((l, k) => { if (r >= l.min) i = k; });
+  const L = LEVELS[i], next = LEVELS[i + 1];
+  return {...L, next, toNext:next ? Math.min(100, (r - L.min) / (next.min - L.min) * 100) : 100};
+}
+/* Días seguidos registrando (cuenta hasta hoy, o hasta ayer si hoy aún no registras) */
+function streak(){
+  const days = new Set(S.tx.filter(t => t.by === me()).map(t => t.date));
+  let d = days.has(TODAY) ? TODAY : addDays(TODAY, -1), n = 0;
+  while (days.has(d)){ n++; d = addDays(d, -1); }
+  return n;
+}
+/* Gastos hormiga: compras pequeñas (hasta L 150) de los últimos 30 días */
+function hormiga(){
+  const since = addDays(TODAY, -30), byCat = {}; let n = 0, sum = 0;
+  for (const t of S.tx){
+    if (t.type !== 'expense' || t.tg || t.date < since || t.by !== me() || t.amount > 150) continue;
+    const a = acc(t.acc); if (!a || a.shared || a.cur !== 'HNL') continue;
+    const c = cat(t.cat); if (c.kind !== 'expense') continue;
+    n++; sum += t.amount; const r = rootOf(c).id || 'none'; byCat[r] = (byCat[r] || 0) + t.amount;
+  }
+  const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
+  return {n, sum:round2(sum), daily:sum / 30, top:top ? (top[0] === 'none' ? UNKNOWN_CAT : cat(top[0])) : null};
+}
+const CH = {
+  sobres:{e:'✉️', n:'Reto de los 100 sobres', slots:100, bases:[1, 2, 5, 10], viral:true, unit:'sobres',
+    d:'100 sobres numerados del 1 al 100. Cada día sacas uno al azar y guardas ese número por tu base.', val:(c, i) => c.base * i},
+  '52semanas':{e:'📅', n:'Reto de las 52 semanas', slots:52, bases:[5, 10, 20, 50, 100], viral:true, unit:'semanas',
+    d:'La semana 1 guardas tu base, la semana 2 el doble, la 3 el triple… hasta la semana 52.', val:(c, i) => c.base * i},
+  hormiga:{e:'🐜', n:'30 días sin gastos hormiga', slots:30, bases:[20, 30, 50, 80, 100], unit:'días',
+    d:'Cada día que evites antojos (cafecitos, churros, delivery), guarda lo que te ibas a gastar.', val:c => c.base},
+  nogasto:{e:'🧘', n:'Semana sin gastar', slots:7, bases:[50, 100, 150, 200, 300], unit:'días',
+    d:'7 días solo con lo esencial. Marca cada día que lo logres y guarda lo que no gastaste.', val:c => c.base},
+  redondeo:{e:'🪙', n:'Reto del redondeo', slots:0, bases:[10, 50, 100], unit:'',
+    d:'Cada gasto se redondea al siguiente múltiplo de tu base y la diferencia es ahorro. Kuenta lo calcula sola.', val:() => 0}
+};
+const chTotal = c => { const k = CH[c.kind]; let s = 0; for (let i = 1; i <= k.slots; i++) s += k.val(c, i); return s; };
+function roundUp(c){
+  let sum = 0, n = 0;
+  for (const t of S.tx){
+    if (t.type !== 'expense' || t.tg || t.by !== me() || t.date < c.start) continue;
+    const a = acc(t.acc); if (!a || a.shared || a.cur !== 'HNL') continue;
+    const up = round2(Math.ceil(t.amount / c.base - 1e-9) * c.base - t.amount); if (up > 0){ sum += up; n++; }
+  }
+  return {sum:round2(sum), n};
+}
+const chSaved = c => c.kind === 'redondeo' ? roundUp(c).sum : c.done.reduce((s, i) => s + CH[c.kind].val(c, i), 0);
+const pickBase = (bases, target) => [...bases].reverse().find(v => v <= target) || bases[0];
+function chSuggestBase(kind, pl){
+  const b = CH[kind].bases, m = pl.monthly || 0;
+  if (kind === 'sobres') return pickBase(b, m * 3.3 / 5050);   // 100 días ≈ 3.3 meses
+  if (kind === '52semanas') return pickBase(b, m * 12 / 1378);
+  if (kind === 'hormiga') return pickBase(b, hormiga().daily || 50);
+  if (kind === 'nogasto') return pickBase(b, m / 30 * 2 || 100);
+  return 50;
+}
+function chTotalText(kind, base){
+  const t = chTotal({kind, base});
+  if (kind === 'sobres') return `Al abrir los 100 sobres tendrás <b>${money(t)}</b>. El más pequeño es ${money(base)} y el más grande ${money(base * 100)}.`;
+  if (kind === '52semanas') return `En un año tendrás <b>${money(t)}</b>. Semana 1: ${money(base)} · semana 52: ${money(base * 52)}.`;
+  if (kind === 'redondeo'){ const r = Math.ceil(137 / base) * base; return `Ejemplo: un gasto de L 137 se redondea a ${money(r)} y ahorras ${money(r - 137)}. Se calcula con los gastos de tus cuentas personales.`; }
+  return `Si lo logras todos los días tendrás <b>${money(t)}</b>.`;
+}
+function badges(st, sk){
+  const prev = period(addMonths(period().start, -1)), ps = summary(prev.start, prev.end, 'personal');
+  const mine = S.tx.filter(t => t.by === me()), spent = new Set(mine.filter(t => t.type === 'expense').map(t => t.date));
+  const quiet = mine.length > 0 && [1, 2, 3, 4, 5, 6, 7].some(i => { const d = addDays(TODAY, -i); return !spent.has(d) && mine.some(t => t.date < d); });
+  return [['✍️', 'Primer registro', mine.length > 0], ['🔥', 'Racha de 7 días', sk >= 7], ['🏆', 'Racha de 30 días', sk >= 30], ['💚', 'Mes en verde', ps.inc > 0 && ps.net > 0],
+    ['🐿️', 'Ahorras 10%', (st.rate ?? 0) >= 10], ['🧘', 'Día sin gastos', quiet], ['🎯', 'Meta cumplida', S.goals.some(g => g.status === 'completed' || goalInfo(g).pct >= 100)],
+    ['🎲', 'Aceptaste un reto', S.challenges.length > 0], ['🥇', 'Reto completado', S.challenges.some(c => c.status === 'completed')], ['🎉', 'Deuda liquidada', S.debts.some(d => d.status === 'paid')],
+    ['📅', 'Pagos al día', S.scheduled.some(s => s.active) && S.scheduled.every(s => !s.active || s.next >= TODAY)], ['🦁', 'Ahorras 30%', (st.rate ?? 0) >= 30]];
+}
+function saveTeaser(){
+  if (!S.tx.length) return '';
+  const st = moneyStats(), lv = levelFor(st.rate), sk = streak(), pl = savingsPlan(st);
+  return `<button class="panel" data-a="nav" data-v="savings" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left">
+    <span class="lvl"><span class="e">${sk >= 2 ? '🔥' : lv.e}</span></span><span style="flex:1;min-width:0"><b>${sk >= 2 ? `${sk} días seguidos registrando` : `Nivel ${lv.n}`}</b>
+    <small class="muted" style="display:block;font-size:12.5px">${pl.monthly ? `Tu plan: ahorra ${money(pl.monthly)} al mes` : 'Descubre cuánto puedes ahorrar'}</small></span>${ic('right','sm')}</button>`;
+}
+function chRow(c){
+  const k = CH[c.kind], pct = k.slots ? Math.round(c.done.length / k.slots * 100) : null;
+  return `<button class="bud" data-a="chOpen" data-v="${c.id}"><div class="h"><span class="tile" style="background:var(--brand-soft)">${k.e}</span>
+    <span class="t"><b>${esc(c.name)}</b><small class="num">${money(chSaved(c))} guardados${k.slots ? ` · ${c.done.length}/${k.slots} ${k.unit}` : ''}</small></span>
+    ${c.status === 'completed' ? '<span class="pill ok">¡Logrado!</span>' : pct !== null ? `<span class="pill brand">${pct}%</span>` : '<span class="pill gold">Automático</span>'}</div>
+    ${pct !== null ? `<div class="bar"><i class="brand" style="width:${pct}%"></i></div>` : ''}</button>`;
+}
+function vSavings(){
+  const st = moneyStats(), pl = savingsPlan(st), lv = levelFor(st.rate), sk = streak(), h = hormiga();
+  const act = S.challenges.filter(c => c.status !== 'archived'), running = new Set(act.filter(c => c.status === 'active').map(c => c.kind));
+  const rate = st.rate === null ? null : Math.round(st.rate);
+  const hero = pl.monthly ? `<div class="hero"><div class="eyebrow">Tu plan de ahorro</div>
+      <div style="display:flex;align-items:baseline;gap:6px;margin-top:4px">${bigMoney(pl.monthly)}<span style="font-weight:700">al mes</span></div>
+      <small>${pl.tight ? 'Hoy gastas casi todo lo que ganas. Empieza con un 5% y súbelo poco a poco: lo importante es el hábito.' : `Es el ${Math.round(pl.pct)}% de tu ingreso: ${money(pl.daily)} al día, ${dailyLike(pl.daily)}.`}</small>
+      <div class="row3"><div><small>En 6 meses</small><b>${money(pl.monthly * 6)}</b></div><div><small>En 1 año</small><b>${money(pl.monthly * 12)}</b></div><div><small>En 5 años</small><b>${money(pl.monthly * 60)}</b></div></div>
+      <div class="row2" style="margin-top:14px"><button class="btn sm" data-a="planGoal" data-v="${pl.monthly}">${ic('target','sm')} Crear meta</button><button class="btn sm ghost" data-a="shareLevel">${ic('share','sm')} Compartir</button></div></div>
+    <div class="muted" style="font-size:12px;margin:8px 2px 0">Calculado con tus ingresos (${money(st.inc)}) y gastos (${money(st.exp + st.gen)}) promedio de ${st.n === 1 ? 'este mes' : `los últimos ${st.n} meses`}.</div>`
+    : `<div class="hero"><div class="eyebrow">Tu plan de ahorro</div><b style="font-family:var(--f-display);font-size:19px;display:block;margin:6px 0">¿Cuánto puedes ahorrar sin sufrir?</b>
+      <small>Registra tus ingresos y gastos de este mes y Kuenta te dirá cuánto guardar, según lo que de verdad ganas y gastas.</small>
+      <div class="row2" style="margin-top:14px"><button class="btn sm" data-a="add" data-v="income">${ic('in','sm')} Registrar ingreso</button><button class="btn sm ghost" data-a="add" data-v="expense">${ic('out','sm')} Registrar gasto</button></div></div>`;
+  const avail = Object.entries(CH).filter(([k]) => !running.has(k));
+  const needCut = pl.tight ? breakdown(period(addMonths(period().start, -1)).start, period(addMonths(period().start, -1)).end, 'personal', 'expense')[0] : null;
+  return `${subhead('Ahorro inteligente')}${needs06()}${hero}
+  ${needCut ? `<div class="tip" style="margin-top:10px"><span>✂️</span><div>Para lograrlo, recorta un 10% en <b>${esc(needCut.c.name)}</b>, tu gasto más grande: son ${money(needCut.v * 0.1)} al mes.</div></div>` : ''}
+  <div class="row2" style="margin-top:12px">
+    <div class="panel lvl"><span class="e">${lv.e}</span><div style="min-width:0;flex:1"><small class="muted">Tu nivel</small><b style="display:block">${lv.n}</b>
+      ${lv.next ? `<div class="bar" style="margin-top:6px"><i style="width:${lv.toNext}%;background:var(--gold)"></i></div><small class="muted" style="font-size:11px">${lv.next.e} al ahorrar ${lv.next.min}%</small>` : '<small class="muted" style="font-size:11px">¡Nivel máximo!</small>'}</div></div>
+    <div class="panel lvl"><span class="e" style="background:var(--warn-soft)">🔥</span><div style="min-width:0"><small class="muted">Racha</small><b style="display:block">${sk} ${sk === 1 ? 'día' : 'días'}</b>
+      <small class="muted" style="font-size:11px">${sk ? 'registrando seguido' : 'Registra hoy y empieza'}</small></div></div></div>
+  ${rate !== null ? `<div class="muted" style="font-size:12.5px;margin:8px 2px 0">Ahorras el <b style="color:var(--fg)">${rate}%</b> de lo que ganas.${lv.next ? ` Llega al ${lv.next.min}% para ser ${lv.next.e} ${lv.next.n}.` : ''}</div>` : ''}
+  ${act.length ? `<div class="section"><div class="sec-h"><h2>Tus retos</h2></div><div class="list">${act.map(chRow).join('')}</div></div>` : ''}
+  ${S.v06 && avail.length ? `<div class="section"><div class="sec-h"><h2>${act.length ? 'Más retos' : 'Empieza un reto'}</h2><span class="muted" style="font-size:12px">Ajustados a tus ingresos</span></div>
+    <div class="cards">${avail.map(([key, k]) => `<button class="chcard" data-a="chNew" data-v="${key}">${k.viral ? '<span class="pill gold viral">🔥 Viral</span>' : ''}<span class="e">${k.e}</span><b>${k.n}</b><small>${k.d}</small>
+      ${k.slots ? `<span class="pill brand" style="align-self:flex-start;margin-top:auto">Meta ${short(chTotal({kind:key, base:chSuggestBase(key, pl)}))}</span>` : ''}</button>`).join('')}</div></div>` : ''}
+  ${h.n >= 5 ? `<div class="section"><div class="sec-h"><h2>Gastos hormiga 🐜</h2></div><div class="panel">
+    <b>${h.n} compras pequeñas suman ${money(h.sum)} en 30 días</b>
+    <div class="muted" style="font-size:13px;margin-top:4px">${h.top ? `La mayoría en ${esc(h.top.icon)} ${esc(h.top.name)}. ` : ''}Si recortas la mitad, ahorras <b style="color:var(--pos)">${money(h.sum / 2)}</b> al mes: <b style="color:var(--pos)">${money(h.sum * 6)}</b> al año.</div>
+    ${running.has('hormiga') || !S.v06 ? '' : '<button class="btn ghost sm" style="margin-top:10px" data-a="chNew" data-v="hormiga">Aceptar el reto anti-hormiga</button>'}</div></div>` : ''}
+  ${st.inc > 0 ? `<div class="section"><div class="sec-h"><h2>Regla 50/30/20</h2><span class="muted" style="font-size:12px">con tu ingreso de ${short(st.inc)}</span></div><div class="panel legend">
+    <div class="li"><i style="background:var(--brand)"></i><span>Necesidades: casa, comida, transporte, servicios</span><b>${money(st.inc * .5)}</b></div>
+    <div class="li"><i style="background:var(--gold)"></i><span>Gustos: salidas, compras, antojos</span><b>${money(st.inc * .3)}</b></div>
+    <div class="li"><i style="background:var(--pos)"></i><span>Ahorro y pago de deudas</span><b>${money(st.inc * .2)}</b></div>
+    <div class="note">${rate >= 20 ? `¡Ya ahorras el ${rate}%! Vas por encima de la regla.` : `Hoy ahorras el ${Math.max(0, rate)}%. Te falta ${20 - Math.max(0, rate)}% para llegar al 20%.`}</div></div></div>` : ''}
+  <div class="section"><div class="sec-h"><h2>Logros</h2><span class="muted" style="font-size:12px">${badges(st, sk).filter(b => b[2]).length} de ${badges(st, sk).length}</span></div>
+    <div class="badges">${badges(st, sk).map(([e, n, on]) => `<div class="badge ${on ? '' : 'off'}" title="${on ? 'Logrado' : 'Por lograr'}"><span>${e}</span>${n}</div>`).join('')}</div></div>
+  <div class="note" style="margin-top:14px">Al compartir solo se muestran porcentajes y niveles, nunca tus montos.</div>`;
+}
+function chNewSheet(kind){
+  const k = CH[kind], pl = savingsPlan(moneyStats()), base = chSuggestBase(kind, pl);
+  S.form = {kind, base};
+  const goals = S.goals.filter(g => g.scope === 'p' && !g.linked && g.status === 'active');
+  openSheet(`${sheetHead(`${k.e} ${k.n}`)}<p class="muted" style="margin:0 0 12px">${k.d}</p>
+    <div class="eyebrow" style="margin-bottom:6px">${kind === 'redondeo' ? 'Redondear al siguiente' : kind === 'sobres' || kind === '52semanas' ? 'Tu base' : 'Cuánto guardas cada día'}</div>
+    <div class="chips" id="chbases">${k.bases.map(v => `<button type="button" class="chip ${v === base ? 'on' : ''}" data-a="chBase" data-v="${v}">${money(v).replace('.00', '')}</button>`).join('')}</div>
+    <div class="note" id="chtotal" style="margin-top:10px">${chTotalText(kind, base)}</div>
+    ${pl.monthly && k.slots ? `<div class="muted" style="font-size:12px;margin-top:6px">Te sugerimos ${money(base).replace('.00', '')} según tu plan de ${money(pl.monthly)} al mes.</div>` : ''}
+    ${goals.length && kind !== 'redondeo' ? `<div class="field" style="margin-top:12px"><label for="ch-g">Sumar lo que guardes a una meta (opcional)</label><select class="inp" id="ch-g"><option value="">No, solo llevar la cuenta</option>${goals.map(g => `<option value="${g.id}">${esc(g.icon)} ${esc(g.name)}</option>`).join('')}</select></div>` : ''}
+    <div class="err" id="derr" style="margin-top:8px"></div>
+    <button class="btn" style="margin-top:14px" data-a="chCreate">¡Acepto el reto! 💪</button>`);
+}
+function chSheet(id){
+  const c = S.challenges.find(x => x.id === id); if (!c) return;
+  const k = CH[c.kind], scroll = $('#sheet .panel-s')?.scrollTop || 0, live = c.status === 'active';
+  let body;
+  if (c.kind === 'redondeo'){
+    const r = roundUp(c);
+    body = `<div class="panel" style="text-align:center"><div class="eyebrow">Ahorro por redondeo desde el ${dShort(c.start)}</div><div class="num" style="font-size:32px;font-weight:700;color:var(--pos);margin:4px 0">${money(r.sum)}</div>
+      <small class="muted">${r.n} ${r.n === 1 ? 'gasto redondeado' : 'gastos redondeados'} al siguiente ${money(c.base).replace('.00', '')}</small></div>
+      <div class="note" style="margin-top:10px">Cada fin de mes pasa este monto a tu cuenta de ahorro con <b>Transferir</b>. ¡Es dinero que ni sentiste!</div>`;
+  } else {
+    const pct = Math.round(c.done.length / k.slots * 100), day = dDiff(c.start, TODAY);
+    const cur = c.kind === '52semanas' ? Math.floor(day / 7) + 1 : c.kind === 'sobres' ? null : day + 1;
+    body = `<div style="display:flex;gap:14px;align-items:center;margin-bottom:14px">${ring(pct, 'var(--brand)', pct + '%')}
+      <div><div class="num" style="font-size:22px;font-weight:700">${money(chSaved(c))}</div><small class="muted">de ${money(chTotal(c))} · ${c.done.length}/${k.slots} ${k.unit}</small></div></div>
+      ${c.kind === 'sobres' && live ? `<button class="btn" data-a="chRandom" data-v="${c.id}" style="margin-bottom:10px">🎲 Sacar un sobre al azar</button><div id="chpick"></div>` : ''}
+      ${live && cur && cur <= k.slots && !c.done.includes(cur) ? `<div class="note" style="margin-bottom:10px">Hoy toca: <b>${c.kind === '52semanas' ? 'semana' : 'día'} ${cur}</b> → guarda ${money(k.val(c, cur))}. <button class="link" data-a="chToggle" data-v="${c.id}" data-i="${cur}">Ya lo guardé</button></div>` : ''}
+      ${c.status === 'completed' ? '<div class="ok-msg" style="margin-bottom:10px">¡Reto completado! 🎉 Compártelo y reta a alguien más.</div>' : ''}
+      <div class="slots">${Array.from({length:k.slots}, (_, n) => n + 1).map(i => `<button class="${c.done.includes(i) ? 'on' : ''} ${i === cur ? 'now' : ''}" data-a="chToggle" data-v="${c.id}" data-i="${i}" data-n="${i}" title="${money(k.val(c, i))}" aria-label="${i}: ${money(k.val(c, i))}${c.done.includes(i) ? ', guardado' : ''}">${i}</button>`).join('')}</div>
+      <small class="muted" style="display:block;margin-top:8px">Toca un número cuando guardes ese monto. Tócalo otra vez para desmarcarlo.</small>`;
+  }
+  const g = c.goal && S.goals.find(x => x.id === c.goal);
+  openSheet(`${sheetHead(`${k.e} ${esc(c.name)}`)}${body}
+    ${g ? `<div class="note" style="margin-top:10px">Lo que marques se suma a tu meta ${esc(g.icon)} ${esc(g.name)}.</div>` : ''}
+    <div class="row2" style="margin-top:14px"><button class="btn ghost" data-a="chShare" data-v="${c.id}">${ic('share','sm')} Compartir</button>
+      <button class="btn ghost" data-a="chArchive" data-v="${c.id}">${c.status === 'completed' ? 'Archivar' : 'Abandonar'}</button></div>`);
+  const ps = $('#sheet .panel-s'); if (ps) ps.scrollTop = scroll;
+}
+/* Imagen para historias (1080×1350). Solo porcentajes y niveles: nunca montos. */
+async function shareImage({emoji, title, big, sub, text}){
+  const W = 1080, H = 1350, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  try { await Promise.all([document.fonts.load('700 120px Sora'), document.fonts.load('600 44px Manrope')]); } catch {}
+  const grd = g.createLinearGradient(0, 0, W, H); grd.addColorStop(0, '#0A5C4F'); grd.addColorStop(1, '#13A26F');
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  g.strokeStyle = 'rgba(255,255,255,.08)'; g.lineWidth = 90;
+  [[W - 60, 140, 260], [60, H - 160, 220]].forEach(([x, y, r]) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke(); });
+  const fit = (t, max, size, font) => { let s = size; do { g.font = `${font.replace('#', s)}`; s -= 4; } while (g.measureText(t).width > max && s > 30); };
+  const wrap = (t, y, lh) => { const words = t.split(' '); let line = ''; for (const w of words){ const tt = line ? line + ' ' + w : w; if (g.measureText(tt).width > 900 && line){ g.fillText(line, W / 2, y); line = w; y += lh; } else line = tt; } g.fillText(line, W / 2, y); };
+  g.textAlign = 'center'; g.fillStyle = '#fff';
+  g.font = '230px serif'; g.fillText(emoji, W / 2, 440);
+  g.globalAlpha = .85; g.font = '600 46px Manrope, sans-serif'; wrap(title, 560, 58); g.globalAlpha = 1;
+  fit(big, 940, 150, '700 #px Sora, sans-serif'); g.fillText(big, W / 2, 760);
+  g.font = '600 44px Manrope, sans-serif'; wrap(sub, 870, 58);
+  g.fillStyle = '#F6BE45'; const bw = 520, bx = (W - bw) / 2, by = 1010;
+  g.beginPath(); g.roundRect ? g.roundRect(bx, by, bw, 96, 48) : g.rect(bx, by, bw, 96); g.fill();
+  g.fillStyle = '#04231A'; g.font = '700 42px Manrope, sans-serif'; g.fillText('¿Te animas? 💪', W / 2, by + 62);
+  try { const img = new Image(); img.src = 'icons/logo-mark.png'; await img.decode(); g.drawImage(img, W / 2 - 170, H - 175, 72, 72); } catch {}
+  g.fillStyle = '#fff'; g.textAlign = 'left'; g.font = '700 54px Sora, sans-serif'; g.fillText('Kuenta', W / 2 - 80, H - 120);
+  g.globalAlpha = .8; g.font = '500 32px Manrope, sans-serif'; g.textAlign = 'center'; g.fillText(location.host, W / 2, H - 50); g.globalAlpha = 1;
+  const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+  const file = new File([blob], 'kuenta-ahorro.png', {type:'image/png'});
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    try { await navigator.share({files:[file], text}); } catch (e) { if (e.name !== 'AbortError') throw e; }
+  } else { download(blob, 'kuenta-ahorro.png'); copyText(text, 'Imagen descargada y texto copiado. ¡Compártelo en tus historias!'); }
+}
+
+/* ---- acciones ---- */
+Object.assign(A, {
+  pushOn: enablePush,
+  pushOff: async () => { await dropPushHere(); render(); toast('Notificaciones desactivadas en este teléfono'); },
+  pushTest: async () => { const reg = await swReady(); await reg.showNotification('¿Ya registraste tus movimientos? ✍️', {body:'Así se verán tus recordatorios.', icon:'icons/icon-192.png', badge:'icons/favicon-48.png', tag:'kuenta-test', data:{url:'./?go=add'}}); },
+  remAdd: async () => { const used = new Set(S.reminder.times); const t = ['09:00','13:00','20:00','07:00','18:00','22:00','12:00','16:00'].find(x => !used.has(x)) || '12:00'; await saveReminder({times:[...S.reminder.times, t]}); render(); },
+  remDel: async el => { await saveReminder({times:S.reminder.times.filter((_, i) => i !== +el.dataset.v)}); render(); },
+  remReset: async () => { await saveReminder({times:[...DEFAULT_TIMES], enabled:true}); render(); toast('Recordatorios a las 9:00 a. m., 1:00 p. m. y 8:00 p. m.'); },
+  schNew: () => schForm(null), schEdit: el => schForm(el.dataset.v), schOpen: el => schSheet(el.dataset.v),
+  schSkip: async el => { const s = S.scheduled.find(x => x.id === el.dataset.v), nn = await schAdvance(s); closeSheet(); render(); toast(nn ? `Listo. El próximo es el ${dShort(nn)}` : 'Pago terminado'); },
+  schToggle: async el => {
+    const s = S.scheduled.find(x => x.id === el.dataset.v), row = {is_active:!s.active};
+    if (!s.active && s.freq !== 'once'){ let n = s.next, k = 0; while (n < TODAY && k++ < 400) n = nextOcc(s, n); row.next_date = n; }
+    await q(sb.from('scheduled_payments').update(row).eq('id', s.id)); s.active = row.is_active; if (row.next_date) s.next = row.next_date; sortSch();
+    closeSheet(); render(); toast(s.active ? 'Pago reanudado' : 'Pago pausado: no te avisaremos');
+  },
+  schAskDel: el => { $('#schdel').innerHTML = `<div class="note" style="margin-bottom:8px">¿Eliminar este pago programado? Los movimientos ya registrados se conservan.</div><div class="row2"><button class="btn ghost" data-a="closeSheet">Cancelar</button><button class="btn danger" data-a="schDel" data-v="${el.dataset.v}">Sí, eliminar</button></div>`; },
+  schDel: async el => { await q(sb.from('scheduled_payments').delete().eq('id', el.dataset.v)); S.scheduled = S.scheduled.filter(s => s.id !== el.dataset.v); closeSheet(); render(); toast('Pago programado eliminado'); },
+  debtNew: () => debtForm(null), debtEdit: el => debtForm(el.dataset.v),
+  debtOpen: el => { S.ui.debtId = el.dataset.v; go('debt', S.ui.screen === 'debt' ? 'debts' : S.ui.screen); },
+  debtPayNew: el => debtPaySheet(el.dataset.v), debtSim: el => debtSimSheet(el.dataset.v),
+  useEst: () => { if (S.form.est != null) $('#db-b').value = S.form.est; },
+  simQuick: el => { $('#sim-x').value = el.dataset.v; simRender(); },
+  debtPayDel: el => toast('¿Eliminar este pago? El gasto registrado en tu cuenta no se borra.', 'warn', {label:'Eliminar', run: async () => {
+    const d = S.debts.find(x => x.id === el.dataset.d);
+    await q(sb.from('debt_payments').delete().eq('id', el.dataset.v));
+    d.pays = d.pays.filter(p => p.id !== el.dataset.v);
+    if (d.status === 'paid' && debtBal(d) > 0){ await q(sb.from('debts').update({status:'active'}).eq('id', d.id)); d.status = 'active'; }
+    render(); toast('Pago eliminado');
+  }}),
+  debtAskDel: el => { $('#debtdel').innerHTML = `<div class="note" style="margin-bottom:8px">Se borrará la deuda y su historial de pagos. Los gastos registrados en tus cuentas se conservan.</div><div class="row2"><button class="btn ghost" data-a="debtOpen" data-v="${el.dataset.v}">Cancelar</button><button class="btn danger" data-a="debtDel" data-v="${el.dataset.v}">Sí, eliminar</button></div>`; },
+  debtDel: async el => { await q(sb.from('debts').delete().eq('id', el.dataset.v)); S.debts = S.debts.filter(d => d.id !== el.dataset.v); go('debts', 'more'); toast('Deuda eliminada'); },
+  planGoal: el => goalSheet({name:'Mi fondo de ahorro', target:Math.round(+el.dataset.v * 12), date:addMonths(TODAY, 12), icon:'🐷'}),
+  shareLevel: async () => {
+    const st = moneyStats(), lv = levelFor(st.rate), sk = streak();
+    await shareImage({emoji:lv.e, title:'Mi nivel de ahorrador', big:lv.n, sub:sk >= 2 ? `🔥 ${sk} días seguidos cuidando mis finanzas` : st.rate > 0 ? `Ahorro el ${Math.round(st.rate)}% de lo que gano` : 'Empecé a ordenar mis finanzas',
+      text:`Soy ${lv.e} ${lv.n} en Kuenta. ¿Qué nivel de ahorrador eres tú? ${location.origin}`});
+  },
+  chNew: el => chNewSheet(el.dataset.v), chOpen: el => chSheet(el.dataset.v),
+  chBase: el => { S.form.base = +el.dataset.v; $('#chbases').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); $('#chtotal').innerHTML = chTotalText(S.form.kind, S.form.base); },
+  chCreate: async () => {
+    const k = CH[S.form.kind], goal = $('#ch-g')?.value || null;
+    const row = await q(sb.from('savings_challenges').insert({kind:S.form.kind, name:k.n, base_amount:S.form.base, slots:k.slots, goal_id:goal, start_date:TODAY}).select().single());
+    S.challenges.push(mapCh(row)); render(); chSheet(row.id); toast('¡Reto aceptado! Tú puedes 🔥');
+  },
+  chToggle: async el => {
+    const c = S.challenges.find(x => x.id === el.dataset.v), i = +el.dataset.i, k = CH[c.kind];
+    const on = !c.done.includes(i), done = on ? [...c.done, i].sort((a, b) => a - b) : c.done.filter(x => x !== i);
+    const complete = done.length >= k.slots, was = c.status;
+    await q(sb.from('savings_challenges').update({done, status:complete ? 'completed' : 'active'}).eq('id', c.id));
+    c.done = done; c.status = complete ? 'completed' : 'active';
+    const g = c.goal && S.goals.find(x => x.id === c.goal && !x.linked);
+    if (g){ try { const v = k.val(c, i); await q(sb.from('goal_contributions').insert({goal_id:g.id, amount:on ? v : -v, contributed_on:TODAY, created_by:me(), note:c.name.slice(0, 200)})); await loadGoals(); }
+      catch (e) { toast('Se marcó en el reto, pero no se sumó a la meta: ' + errMsg(e), 'warn'); } }
+    render(); chSheet(c.id);
+    if (complete && was !== 'completed') toast(`¡Completaste el ${c.name}! 🎉 Ahorraste ${money(chSaved(c))}`);
+    else if (on) toast(`+${money(k.val(c, i))} guardados 💪`);
+  },
+  chRandom: el => {
+    const c = S.challenges.find(x => x.id === el.dataset.v), left = Array.from({length:100}, (_, n) => n + 1).filter(n => !c.done.includes(n));
+    if (!left.length) return;
+    const i = left[crypto.getRandomValues(new Uint32Array(1))[0] % left.length];
+    $('#chpick').innerHTML = `<div class="note" style="text-align:center;margin-bottom:10px"><div style="font-size:40px">✉️</div>Te tocó el sobre <b>#${i}</b>: guarda <b>${money(CH.sobres.val(c, i))}</b> hoy.
+      <button class="btn sm" data-a="chToggle" data-v="${c.id}" data-i="${i}" style="margin:10px auto 0">Ya lo guardé</button></div>`;
+    document.querySelectorAll('.slots button').forEach(b => b.classList.toggle('pick', +b.dataset.n === i));
+  },
+  chShare: async el => {
+    const c = S.challenges.find(x => x.id === el.dataset.v), k = CH[c.kind];
+    const pct = k.slots ? Math.round(c.done.length / k.slots * 100) : null;
+    await shareImage({emoji:k.e, title:c.name, big:c.status === 'completed' ? '¡Logrado!' : pct !== null ? `${pct}%` : '¡En marcha!',
+      sub:k.slots ? `${c.done.length} de ${k.slots} ${k.unit} completados` : 'Ahorrando con cada compra',
+      text:`${c.status === 'completed' ? `¡Completé el ${c.name}!` : `Voy por el ${pct ?? 0}% del ${c.name}`} en Kuenta 💪 ¿Te animas a ahorrar conmigo? ${location.origin}`});
+  },
+  chArchive: async el => { await q(sb.from('savings_challenges').update({status:'archived'}).eq('id', el.dataset.v)); S.challenges = S.challenges.filter(c => c.id !== el.dataset.v); closeSheet(); render(); toast('Reto archivado'); }
+});
+
+/* ---- formularios ---- */
+Object.assign(F, {
+  sched: async f => {
+    const id = f.dataset.id, s0 = id ? S.scheduled.find(x => x.id === id) : null, err = $('#ferr'), name = $('#sp-n').value.trim(), amount = round2(parseAmt($('#sp-a').value));
+    const a = acc($('#sp-ac').value), catId = $('#sp-c').value, next = $('#sp-d').value, end = $('#sp-e').value || null, freq = $('#sp-f').value;
+    if (!name) return (err.textContent = 'Escribe un nombre.');
+    if (!(amount > 0)) return (err.textContent = 'Escribe un monto mayor que cero.');
+    if (!a) return (err.textContent = 'Elige la cuenta desde la que pagas.');
+    if (!catId) return (err.textContent = 'Elige una categoría.');
+    if (!next) return (err.textContent = 'Elige la fecha del pago.');
+    if (end && end < next) return (err.textContent = 'La fecha final debe ser después de la próxima fecha.');
+    const anchor = s0 && s0.next === next && s0.anchor ? s0.anchor : +next.slice(8);
+    const row = {name, amount, frequency:freq, account_id:a.id, category_id:catId, next_date:next, end_date:end, anchor_day:anchor,
+      remind_day_before:$('#sp-b').checked, remind_same_day:$('#sp-s').checked, owner_id:a.shared ? null : me(), family_id:a.shared ? a.family_id : null};
+    if (id) await q(sb.from('scheduled_payments').update(row).eq('id', id));
+    else await q(sb.from('scheduled_payments').insert(row));
+    closeSheet(); await loadScheduled(); render(); toast(id ? 'Pago actualizado' : 'Pago programado. Te avisaremos antes de cada fecha.');
+  },
+  schPay: async f => {
+    const s = S.scheduled.find(x => x.id === f.dataset.id), err = $('#ferr'), amount = round2(parseAmt($('#sp-pa').value)), date = $('#sp-pd').value;
+    if (!(amount > 0)) return (err.textContent = 'Escribe un monto mayor que cero.');
+    if (!date || date > TODAY) return (err.textContent = 'La fecha no puede ser futura.');
+    const row = await q(sb.from('transactions').insert({account_id:s.acc, category_id:s.cat, type:'expense', amount, occurred_on:date,
+      description:s.name.slice(0, 120), notes:'Pago programado', created_by:me()}).select().single());
+    S.tx.unshift(mapTx(row)); LS.set('lastTx.' + me(), Date.now()); markRemindersRead();
+    const nn = await schAdvance(s);
+    closeSheet(); await afterWrite(); render(); toast(nn ? `Pago registrado. El próximo es el ${dShort(nn)}` : 'Pago registrado');
+  },
+  debt: async f => {
+    const id = f.dataset.id, d0 = id ? S.debts.find(x => x.id === id) : null, err = $('#ferr');
+    const name = $('#db-n').value.trim(), kind = $('#db-k').value, cur = $('#db-c').value, orig = round2(parseAmt($('#db-o').value));
+    const rate = parseAmt($('#db-r').value || 0), term = parseInt($('#db-t').value, 10) || null, instRaw = $('#db-i').value.trim(), inst = instRaw ? round2(parseAmt(instRaw)) : null;
+    const flat = $('#db-rt').value === 'flat', old = $('#db-old').checked, payDay = parseInt($('#db-pd').value, 10) || null;
+    if (!name) return (err.textContent = 'Escribe un nombre para la deuda.');
+    if (!(orig > 0)) return (err.textContent = 'Escribe el monto prestado.');
+    if (isNaN(rate) || rate < 0 || rate > 300) return (err.textContent = 'La tasa debe estar entre 0% y 300% anual.');
+    if (term !== null && (term < 1 || term > 600)) return (err.textContent = 'El plazo debe estar entre 1 y 600 meses.');
+    if (inst !== null && !(inst > 0)) return (err.textContent = 'La cuota debe ser un número mayor que cero.');
+    if (!term && !inst) return (err.textContent = 'Escribe el plazo en meses o la cuota mensual.');
+    const r = rate / 1200, calc = term ? round2(flat ? flatPay(orig, r, term) : annuity(orig, r, term)) : null;
+    let start = d0 ? d0.from : TODAY, bal = orig;
+    if (old){
+      start = $('#db-sd').value;
+      if (!start || start > TODAY) return (err.textContent = 'Elige la fecha en que recibiste el préstamo.');
+      const b = $('#db-b').value.trim();
+      bal = b ? round2(parseAmt(b)) : estBalance(orig, r, term, inst || calc, monthsBetween(start, TODAY), flat);
+      if (!(bal >= 0) || bal > orig * 3) return (err.textContent = 'Revisa el saldo: debe ser un número entre 0 y el triple del monto prestado.');
+    }
+    const row = {name, lender:$('#db-l').value.trim().slice(0, 60) || null, kind, currency:cur, original_amount:orig, current_balance:bal, annual_rate:Math.round(rate * 1000) / 1000,
+      rate_type:flat ? 'flat' : 'saldo', term_months:term, installment:inst || calc, payment_day:payDay, start_date:start, icon:(DEBT_KINDS[kind] || DEBT_KINDS.otro)[0], notes:$('#db-no').value.trim().slice(0, 300) || null};
+    if (d0){
+      const paidPr = d0.pays.reduce((s, p) => s + p.principal, 0);
+      row.status = bal - paidPr > 0.005 ? 'active' : 'paid';
+      await q(sb.from('debts').update(row).eq('id', id));
+    } else {
+      const ins = await q(sb.from('debts').insert({...row, tracking_from:TODAY, status:bal > 0 ? 'active' : 'paid'}).select().single());
+      S.ui.debtId = ins.id;
+    }
+    closeSheet(); await loadDebts();
+    if (!d0) go('debt', 'debts'); else render();
+    toast(d0 ? 'Deuda actualizada' : 'Deuda agregada. Revisa tu plan y las sugerencias para pagarla antes.');
+  },
+  debtPay: async f => {
+    const d = S.debts.find(x => x.id === f.dataset.id), err = $('#ferr'), amount = round2(parseAmt($('#dp-a').value)), date = $('#dp-d').value, extra = $('#dp-x').checked;
+    const interest = extra ? 0 : round2(parseAmt($('#dp-i').value || 0));
+    if (!(amount > 0)) return (err.textContent = 'Escribe el monto que pagaste.');
+    if (!date || date > TODAY) return (err.textContent = 'La fecha no puede ser futura.');
+    if (isNaN(interest) || interest < 0 || interest > amount) return (err.textContent = 'Los intereses no pueden ser mayores que el pago.');
+    const B = debtBal(d), principal = round2(Math.min(B, amount - interest));
+    let txId = null;
+    if ($('#dp-tx').checked){
+      const a = acc($('#dp-ac').value), c = $('#dp-c').value;
+      if (!a) return (err.textContent = 'Elige la cuenta del pago.');
+      if (!c) return (err.textContent = 'Elige una categoría para el gasto.');
+      const row = await q(sb.from('transactions').insert({account_id:a.id, category_id:c, type:'expense', amount, occurred_on:date, description:('Pago ' + d.name).slice(0, 120),
+        notes:extra ? 'Abono extra a capital' : `Capital ${money(principal, d.cur)} · intereses ${money(interest, d.cur)}`, created_by:me()}).select().single());
+      S.tx.unshift(mapTx(row)); txId = row.id; LS.set('lastTx.' + me(), Date.now());
+      if (d.acc !== a.id || d.cat !== c) sb.from('debts').update({account_id:a.id, category_id:c}).eq('id', d.id).then(() => {}, () => {});
+    }
+    await q(sb.from('debt_payments').insert({debt_id:d.id, amount, principal, interest, is_extra:extra, paid_on:date, transaction_id:txId, created_by:me()}));
+    const left = round2(B - principal);
+    if (left <= 0.005) await q(sb.from('debts').update({status:'paid'}).eq('id', d.id));
+    closeSheet(); await Promise.all([loadDebts(), txId ? afterWrite() : null]); render();
+    toast(left <= 0.005 ? `¡Liquidaste ${d.name}! 🎉 Una deuda menos.` : `Pago registrado. Te falta ${money(left, d.cur)}`);
+  }
+});
+
+/* ---- campos con cálculo en vivo ---- */
+document.addEventListener('input', e => {
+  const k = e.target.dataset.in;
+  if (k === 'debtCalc') debtCalcHint();
+  else if (k === 'dpCalc') dpPreview();
+  else if (k === 'dpInt'){ S.form.iTouched = true; dpPreview(); }
+  else if (k === 'simCalc') simRender();
+});
+document.addEventListener('change', e => {
+  const el = e.target, k = el.dataset.in; if (!k) return;
+  if (k === 'remOpt') guarded(el, async () => { await saveReminder({[el.dataset.k]:el.checked}); render(); });
+  else if (k === 'remTime') guarded(el, async () => { const t = [...S.reminder.times]; t[+el.dataset.i] = el.value; await saveReminder({times:t}); render(); });
+  else if (k === 'schAcc') $('#sp-c').innerHTML = schCatOpts(acc(el.value), $('#sp-c').value);
+  else if (k === 'dpAcc'){ const d = S.debts.find(x => x.id === S.form.debt); $('#dp-c').innerHTML = debtCatOpts(acc(el.value), d); }
+  else if (k === 'debtCalc') debtCalcHint();
+  else if (k === 'debtExtra'){ S.ui.debtExtra = Math.max(0, parseAmt(el.value) || 0); render(); }
+});
+
 /* ============ eventos ============ */
 async function guarded(el, fn){
   if (el.dataset.busy) return; el.dataset.busy = '1';
@@ -1623,6 +2536,7 @@ document.addEventListener('visibilitychange', async () => {
   const away = Date.now() - hiddenAt;
   if (hiddenAt && pinRec() && !S.locked && away > LOCK_MINUTES * 60000){ S.locked = true; S.pinEntry = ''; closeSheet(); render(); }
   if (Date.now() - S.loadedAt > 60000 && $('#sheet').hidden){ try { await loadAll(); render(); } catch {} }
+  localReminderTick();
 });
 
 /* ============ arranque ============ */
@@ -1649,8 +2563,10 @@ A.retry = () => boot(false);
 
 function init(){
   applyTheme();
-  const inv = new URLSearchParams(location.search).get('invite');
+  const qs = new URLSearchParams(location.search), inv = qs.get('invite');
   if (inv && /^[0-9a-f-]{36}$/i.test(inv)){ LS.set(INVITE_KEY, {token:inv, exp:Date.now() + 7 * 864e5}); history.replaceState(null, '', location.pathname); }
+  // Al tocar una notificación se abre ?go=pantalla&id=...
+  if (/^[a-z]{2,12}$/.test(qs.get('go') || '')){ pendingGo = {screen:qs.get('go'), id:qs.get('id')}; history.replaceState(null, '', location.pathname); }
   if (!CONFIGURED){ render(); return; }
   sb.auth.onAuthStateChange((event, session) => {
     setTimeout(() => {
@@ -1664,5 +2580,10 @@ function init(){
     }, 0);
   });
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type !== 'kuenta-go') return;
+    try { const u = new URL(e.data.url); pendingGo = {screen:u.searchParams.get('go'), id:u.searchParams.get('id')}; if (S.profile) render(); } catch {}
+  });
+  setInterval(localReminderTick, 60000);
 }
 init();
