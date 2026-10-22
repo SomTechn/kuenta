@@ -75,7 +75,7 @@ h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:
 .iconbtn{width:42px;height:42px;border-radius:14px;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;position:relative;flex:none}
 .dot{position:absolute;top:7px;right:7px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--neg);color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;border:2px solid var(--surface)}
 .subhead{display:flex;align-items:center;gap:10px;padding-block:8px 16px}
-.subhead h1{font-size:21px;flex:1;min-width:0}
+.subhead h1{font-size:clamp(17px,5.2vw,21px);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .section{margin-top:22px}
 .sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
 .sec-h h2{font-size:16px}
@@ -339,9 +339,10 @@ code.tok{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:n
 .hero .eyebrow{color:rgba(255,255,255,.82)}
 .hero .big{color:#fff;font-size:32px}
 .hero small{opacity:.9}
-.row3{display:flex;gap:18px;margin-top:12px;flex-wrap:wrap}
+.row3{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:10px;margin-top:12px}
+.row3>div{min-width:0}
 .row3 small{display:block;font-size:11.5px;opacity:.78}
-.row3 b{font-family:var(--f-display);font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.row3 b{font-family:var(--f-display);font-size:clamp(12.5px,3.6vw,15px);font-variant-numeric:tabular-nums;white-space:nowrap;display:block;overflow:hidden;text-overflow:ellipsis}
 .hero .btn{background:#fff;color:#0A5C4F}
 .hero .btn.ghost{background:rgba(255,255,255,.18);color:#fff}
 .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:6px}

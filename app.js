@@ -1777,7 +1777,7 @@ function vScheduled(){
   act.forEach(s => { if ((acc(s.acc)?.cur || 'HNL') !== 'HNL') return; const k = schDueUntil(s, p.end).length; tot += k * s.amount; n += k; });
   const wk = addDays(TODAY, 7);
   const grp = (t, arr) => arr.length ? `<div class="section"><div class="sec-h"><h2>${t}</h2></div><div class="list">${arr.map(schRow).join('')}</div></div>` : '';
-  return `${subhead('Pagos programados', S.v06 && writableAccounts().length ? `<button class="btn sm" data-a="schNew">${ic('plus','sm')} Nuevo</button>` : '')}${needs06()}
+  return `${subhead('Pagos programados', S.v06 && writableAccounts().length ? `<button class="iconbtn" data-a="schNew" aria-label="Nuevo pago programado" style="background:var(--brand);color:var(--on-brand);border:0">${ic('plus','sm')}</button>` : '')}${needs06()}
   <div class="panel"><div class="eyebrow">Por pagar hasta el ${dShort(p.end)}</div><div class="num" style="font-size:24px;font-weight:700;margin-top:2px">${money(tot)}</div>
     <small class="muted">${n} ${n === 1 ? 'pago' : 'pagos'} en tu mes financiero · te avisamos un día antes y el mismo día</small></div>
   ${grp('Atrasados', act.filter(s => s.next < TODAY))}${grp('Próximos 7 días', act.filter(s => s.next >= TODAY && s.next <= wk))}
@@ -1815,7 +1815,7 @@ function schSheet(id){
     <div class="panel"><table class="rep"><tr><td class="muted">Frecuencia</td><td class="r">${FREQ[s.freq]}</td></tr>
       <tr><td class="muted">Cuenta</td><td class="r">${esc(a?.name || '—')}</td></tr><tr><td class="muted">Categoría</td><td class="r">${esc(c.icon)} ${esc(c.name)}</td></tr>
       ${s.end ? `<tr><td class="muted">Hasta</td><td class="r">${dShort(s.end)} ${s.end.slice(0, 4)}</td></tr>` : ''}
-      <tr><td class="muted">Avisos</td><td class="r">${[s.before && 'Un día antes', s.same && 'El mismo día'].filter(Boolean).join(' y ') || 'Sin aviso'}</td></tr></table></div>
+      <tr><td class="muted">Avisos</td><td class="r">${[s.before && 'Un día antes', s.same && (s.before ? 'el mismo día' : 'El mismo día')].filter(Boolean).join(' y ') || 'Sin aviso'}</td></tr></table></div>
     ${ed && s.active ? `<form class="form" data-f="schPay" data-id="${s.id}" style="margin-top:14px" novalidate>
       <div class="row2"><div class="field"><label for="sp-pa">Monto pagado</label><input class="inp" id="sp-pa" inputmode="decimal" value="${s.amount}"></div>
       <div class="field"><label for="sp-pd">Fecha</label><input class="inp" id="sp-pd" type="date" value="${s.next <= TODAY ? s.next : TODAY}" max="${TODAY}"></div></div>
