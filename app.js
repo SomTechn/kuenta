@@ -1569,7 +1569,6 @@ const F = {
    RECORDATORIOS, PAGOS PROGRAMADOS, DEUDAS Y AHORRO
    ===================================================================== */
 let pendingGo = null; // pantalla que pidió abrir una notificación (?go=)
-const VAPID = CFG.VAPID_PUBLIC_KEY || '';
 const DEFAULT_TIMES = ['09:00','13:00','20:00'];
 const localTZ = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Tegucigalpa'; } catch { return 'America/Tegucigalpa'; } };
 const defaultReminder = () => ({enabled:true, times:[...DEFAULT_TIMES], timezone:localTZ(), skip_if_logged:true, scheduled_enabled:true, debt_enabled:true, saved:false});
@@ -1644,8 +1643,10 @@ async function enablePush(){
   if (perm !== 'granted') return toast('No diste permiso. Puedes activarlo después en los ajustes del navegador.', 'warn');
   const reg = await swReady();
   let mode = 'local';
-  if (VAPID && 'PushManager' in window && S.v06){
-    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:unb64(VAPID)});
+  // La clave pública la genera el servidor (función send-push); si aún no existe, avisamos con la app abierta
+  const vapid = 'PushManager' in window && S.v06 ? await q(sb.rpc('vapid_public_key')).catch(() => null) : null;
+  if (vapid){
+    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:unb64(vapid)});
     const j = sub.toJSON();
     await q(sb.rpc('save_push_subscription', {p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_user_agent:navigator.userAgent.slice(0, 300)}));
     mode = true;
@@ -1702,7 +1703,7 @@ function vReminders(){
     <div style="display:flex;align-items:center;gap:12px"><span class="tile" style="background:var(--brand-soft);color:var(--brand)">${ic('bell','sm')}</span>
       <div style="flex:1;min-width:0"><b>${status[1]}</b><small class="muted" style="display:block;font-size:12.5px">${status[2]}</small></div><span class="pill ${status[0]}">${st === 'push' || st === 'local' ? 'Sí' : 'No'}</span></div>
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-      ${st === 'off' || (st === 'local' && VAPID) ? `<button class="btn sm" data-a="pushOn">${ic('bell','sm')} Activar notificaciones</button>` : ''}
+      ${st === 'off' || (st === 'local' && S.v06) ? `<button class="btn sm" data-a="pushOn">${ic('bell','sm')} Activar notificaciones</button>` : ''}
       ${st === 'push' || st === 'local' ? `<button class="btn ghost sm" data-a="pushTest">Probar</button><button class="btn ghost sm" data-a="pushOff">Desactivar aquí</button>` : ''}</div></div>
   <div class="panel" style="margin-top:12px"><div class="eyebrow" style="margin-bottom:2px">Registrar movimientos</div>
     ${tg('enabled', 'Recordarme registrar', 'Un aviso a cada hora que elijas')}

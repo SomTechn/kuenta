@@ -1,7 +1,7 @@
 -- =====================================================================
 --  KUENTA 06 — Recordatorios, pagos programados, deudas y retos de ahorro
 --  Ejecútalo completo en Supabase → SQL Editor (es aditivo: no toca datos existentes).
---  Después sigue los pasos de README.md → "Notificaciones push".
+--  Después publica la función "send-push" y guarda su URL (ver README.md).
 -- =====================================================================
 
 -- ---------- notificaciones: nuevos tipos y marca de envío push ----------
@@ -50,9 +50,10 @@ create or replace function public.save_push_subscription(p_endpoint text, p_p256
 returns void language plpgsql security definer set search_path to '' as $$
 begin
   if auth.uid() is null then raise exception 'No autenticado'; end if;
-  delete from public.push_subscriptions where endpoint = p_endpoint;
   insert into public.push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
-  values (auth.uid(), p_endpoint, p_p256dh, p_auth, left(p_user_agent, 300));
+  values (auth.uid(), p_endpoint, p_p256dh, p_auth, left(p_user_agent, 300))
+  on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
+    user_agent = excluded.user_agent, created_at = now(), last_used_at = null;
   insert into public.reminder_settings (user_id) values (auth.uid()) on conflict (user_id) do nothing;
 end $$;
 revoke all on function public.save_push_subscription(text, text, text, text) from public, anon;
@@ -101,6 +102,7 @@ begin
   end if;
   return new;
 end $$;
+revoke all on function public.validate_scheduled_payment() from public, anon, authenticated;
 create trigger trg_validate_scheduled before insert or update on public.scheduled_payments for each row execute function public.validate_scheduled_payment();
 
 -- ---------- deudas ----------
@@ -253,29 +255,47 @@ begin
   on conflict (user_id, dedupe_key) do nothing;
   get diagnostics n = row_count; v_count := v_count + n;
 
-  -- Limpieza: los recordatorios de registrar no se acumulan en Alertas
-  delete from public.notifications where type = 'reminder' and created_at < now() - interval '2 days';
   return v_count;
 end $$;
 revoke all on function public.queue_reminders() from public, anon, authenticated;
 
+-- ---------- configuración de push (solo la ven el servidor y la función de borde) ----------
+-- La función "send-push" genera sus claves VAPID la primera vez que corre: la clave privada nunca sale del servidor.
+create table if not exists public.push_config (
+  id smallint primary key default 1 check (id = 1),
+  function_url text,
+  cron_secret text not null default encode(extensions.gen_random_bytes(32), 'hex'),
+  vapid_public text,
+  vapid_private text,
+  updated_at timestamptz not null default now()
+);
+alter table public.push_config enable row level security; -- sin políticas: nadie desde la app
+revoke all on public.push_config from anon, authenticated;
+insert into public.push_config (id) values (1) on conflict (id) do nothing;
+
+-- La app pide la clave pública para suscribir el teléfono
+create or replace function public.vapid_public_key()
+returns text language sql stable security definer set search_path to '' as $$
+  select vapid_public from public.push_config where id = 1
+$$;
+revoke all on function public.vapid_public_key() from public, anon;
+grant execute on function public.vapid_public_key() to authenticated;
+
 -- ---------- programación (pg_cron + pg_net) ----------
--- Requiere dos secretos en Vault (ver README):
---   kuenta_push_url    → https://<proyecto>.supabase.co/functions/v1/send-push
---   kuenta_cron_secret → el mismo valor que CRON_SECRET de la función de borde
+-- Después de publicar la función, guarda su URL:
+--   update public.push_config set function_url = 'https://<proyecto>.supabase.co/functions/v1/send-push';
 create extension if not exists pg_cron;
-create extension if not exists pg_net;
+create extension if not exists pg_net schema extensions;
 
 create or replace function public.run_reminders()
 returns void language plpgsql security definer set search_path to '' as $$
-declare v_url text; v_secret text;
+declare v_cfg public.push_config;
 begin
   perform public.queue_reminders();
-  select decrypted_secret into v_url from vault.decrypted_secrets where name = 'kuenta_push_url';
-  select decrypted_secret into v_secret from vault.decrypted_secrets where name = 'kuenta_cron_secret';
-  if v_url is not null and v_secret is not null then
-    perform net.http_post(url := v_url, body := '{}'::jsonb,
-      headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_secret));
+  select * into v_cfg from public.push_config where id = 1;
+  if v_cfg.function_url is not null then
+    perform net.http_post(url := v_cfg.function_url, body := '{}'::jsonb,
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_cfg.cron_secret));
   end if;
 end $$;
 revoke all on function public.run_reminders() from public, anon, authenticated;

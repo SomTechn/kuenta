@@ -50,22 +50,17 @@ Funciones nuevas en **Más**:
 - **Deudas**: préstamos, tarjetas, hipotecas, cooperativas o deudas con familiares, incluso los que ya tienen tiempo (estima el saldo según la fecha del préstamo). Cuotas, interés sobre saldo o flat, registro de pagos (capital/interés, abonos extra), tabla de amortización, simulador con abono extra, comparación avalancha vs. bola de nieve y sugerencias personalizadas.
 - **Ahorro inteligente**: plan de ahorro según tus ingresos y gastos reales, niveles (🌱 → 🦁), racha de días registrando, logros, gastos hormiga, regla 50/30/20 y retos virales (100 sobres, 52 semanas, 30 días sin gastos hormiga, semana sin gastar, redondeo) con imagen para compartir en historias (solo porcentajes, nunca montos).
 
-### 1. Base de datos
-Ejecuta `supabase/migrations/06_recordatorios_deudas_ahorro.sql` completo en **SQL Editor**. Es aditivo: no modifica datos existentes. Activa `pg_cron` y `pg_net` y programa la tarea `kuenta-reminders` cada 15 minutos, que crea los avisos en **Alertas**.
-
-Sin los pasos siguientes la app ya funciona: los avisos aparecen en Alertas y los recordatorios llegan mientras Kuenta esté abierta.
-
-### 2. Notificaciones push (para que lleguen con la app cerrada)
-1. Genera las claves VAPID (una sola vez): `npx web-push generate-vapid-keys`.
-2. Copia la **clave pública** en `config.js` → `VAPID_PUBLIC_KEY`.
-3. Publica la función: `supabase functions deploy send-push --no-verify-jwt`.
-4. En **Edge Functions → Secrets** agrega: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (`mailto:kuenta.app.hn@gmail.com`) y `CRON_SECRET` (una cadena larga al azar).
-5. En **SQL Editor** guarda la URL y el secreto para la tarea programada:
+### Puesta en marcha
+1. Ejecuta `supabase/migrations/06_recordatorios_deudas_ahorro.sql` completo en **SQL Editor** (es aditivo: no modifica datos existentes). Activa `pg_cron` y `pg_net` y programa la tarea `kuenta-reminders` cada 15 minutos, que crea los avisos en **Alertas**.
+2. Publica la función de notificaciones: `supabase functions deploy send-push --no-verify-jwt` (se protege sola con un secreto interno).
+3. Guarda su URL en **SQL Editor**:
    ```sql
-   select vault.create_secret('https://<tu-proyecto>.supabase.co/functions/v1/send-push', 'kuenta_push_url');
-   select vault.create_secret('<el mismo CRON_SECRET>', 'kuenta_cron_secret');
+   update public.push_config set function_url = 'https://<tu-proyecto>.supabase.co/functions/v1/send-push';
    ```
-6. Cada persona activa las notificaciones en **Más → Recordatorios**. En iPhone primero hay que instalar Kuenta en la pantalla de inicio (iOS 16.4 o superior).
+
+No hay claves que copiar: la primera vez que corre, la función genera sus claves VAPID y las guarda en `public.push_config`, una tabla que la app no puede leer (la clave privada nunca sale del servidor). La app pide la clave pública con `vapid_public_key()`.
+
+Cada persona activa las notificaciones en **Más → Recordatorios**. En iPhone primero hay que instalar Kuenta en la pantalla de inicio (iOS 16.4 o superior). Si la función no está publicada, los avisos igual aparecen en Alertas y los recordatorios llegan mientras Kuenta esté abierta.
 
 ## Seguridad incluida
 - Reglas **RLS** en todas las tablas; las operaciones sensibles (transferencias, familia, invitaciones) son funciones del servidor.

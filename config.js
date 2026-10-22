@@ -9,8 +9,5 @@ window.KUENTA_CONFIG = {
   // Correo de soporte que se muestra en la app y en las páginas legales
   SUPPORT_EMAIL: 'kuenta.app.hn@gmail.com',
   SUPABASE_URL: 'https://ubvrbsovcwvfgocwnxco.supabase.co',
-  // Clave pública VAPID para notificaciones push (README → "Notificaciones push").
-  // Vacía = los recordatorios solo llegan con la app abierta.
-  VAPID_PUBLIC_KEY: '',
-  SUPABASE_ANON_KEY:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVidnJic292Y3d2ZmdvY3dueGNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5NDExMDcsImV4cCI6MjEwNzUxNzEwN30.IijL8P--DOhA2S47axFfaBaMXlZKYDouxNhNe2iM1cc'
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVidnJic292Y3d2ZmdvY3dueGNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5NDExMDcsImV4cCI6MjEwNzUxNzEwN30.IijL8P--DOhA2S47axFfaBaMXlZKYDouxNhNe2iM1cc'
 };
