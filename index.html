@@ -324,6 +324,13 @@ a.btn{text-decoration:none}
 .credit img{width:18px;height:18px}
 .credit b{color:var(--fg);font-weight:700}
 code.tok{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;background:var(--surface-2);padding:8px 10px;border-radius:10px;user-select:all}
+/* contraseña visible y recordar correo */
+.pw{position:relative}
+.pw .inp{padding-right:48px}
+.pweye{position:absolute;right:5px;top:50%;transform:translateY(-50%);width:38px;height:38px;border-radius:10px;display:grid;place-items:center;color:var(--muted)}
+.pweye:hover{color:var(--fg)}
+.check{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer}
+.check input{width:18px;height:18px;accent-color:var(--brand);margin:0}
 /* ahorro, deudas, pagos programados y recordatorios */
 .hero{border-radius:24px;padding:18px;color:#fff;background:linear-gradient(140deg,var(--card-a),var(--card-b));position:relative;overflow:hidden}
 .hero::after{content:"";position:absolute;right:-40px;top:-50px;width:180px;height:180px;border-radius:50%;border:28px solid rgba(255,255,255,.08);pointer-events:none}
