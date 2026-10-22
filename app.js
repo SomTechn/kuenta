@@ -85,7 +85,9 @@ const P = {
   calendar:'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
   card:'M3 6h18v12H3zM3 10h18M7 15h4',
   spark:'M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z',
-  share:'M12 3v12M7 8l5-5 5 5M5 14v6h14v-6'
+  share:'M12 3v12M7 8l5-5 5 5M5 14v6h14v-6',
+  eye:'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  eyeoff:'M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2'
 };
 const ic = (n, cls = '') => `<span class="ic ${cls}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="${P[n]}"/></svg></span>`;
 
@@ -386,7 +388,7 @@ function render(){
   if (!S.user){ v.className = 'full'; v.innerHTML = vAuth(); n.hidden = true; return; }
   if (!S.profile){ v.className = 'full'; v.innerHTML = vSplash(); n.hidden = true; return; }
   if (planInfo().suspended){ v.className = 'full'; v.innerHTML = vSuspended(); n.hidden = true; return; }
-  if (S.locked){ v.className = 'full'; v.innerHTML = vLock(); n.hidden = true; return; }
+  if (S.locked){ v.className = 'full'; v.innerHTML = vLock(); n.hidden = true; setTimeout(autoBio, 250); return; }
   if (S.needPinSetup){ v.className = 'full'; v.innerHTML = vPinSetup(); n.hidden = true; return; }
   v.className = '';
   const views = {home:vHome, tx:vTx, stats:vStats, more:vMore, budgets:vBudgets, goals:vGoals, family:vFamily,
@@ -418,8 +420,8 @@ function vAuthInner(){
     <form class="form" data-f="signup" novalidate>
       <div class="field"><label for="su-n">Nombre completo</label><input class="inp" id="su-n" required maxlength="80" autocomplete="name"></div>
       <div class="field"><label for="su-e">Correo</label><input class="inp" id="su-e" type="email" required autocomplete="email" inputmode="email"></div>
-      <div class="field"><label for="su-p">Contraseña</label><input class="inp" id="su-p" type="password" required minlength="8" autocomplete="new-password" placeholder="Mínimo 8 caracteres, con letras y números"></div>
-      <div class="field"><label for="su-p2">Repite la contraseña</label><input class="inp" id="su-p2" type="password" required autocomplete="new-password"></div>
+      ${pwField('su-p', 'Contraseña', 'required minlength="8" autocomplete="new-password" placeholder="Mínimo 8 caracteres, con letras y números"')}
+      ${pwField('su-p2', 'Repite la contraseña', 'required autocomplete="new-password"')}
       <div class="err" id="ferr"></div>${m}
       <p class="muted" style="font-size:12.5px;margin:0;text-align:center">Al crear tu cuenta aceptas los <a class="link" href="terminos.html" target="_blank" rel="noopener">Términos de uso</a> y la <a class="link" href="privacidad.html" target="_blank" rel="noopener">Política de privacidad</a>.</p>
       <button class="btn" type="submit">Crear cuenta</button>
@@ -444,24 +446,29 @@ function vAuthInner(){
   }
   if (S.auth === 'forgot') return `<div class="lock">${brand}<h1 style="font-size:20px">Recupera tu acceso</h1>
     <form class="form" data-f="forgot" novalidate><p class="muted" style="margin:0;text-align:center">Te enviaremos un enlace para crear una contraseña nueva.</p>
-      <div class="field"><label for="fg-e">Correo</label><input class="inp" id="fg-e" type="email" required autocomplete="email"></div>
+      <div class="field"><label for="fg-e">Correo</label><input class="inp" id="fg-e" type="email" required autocomplete="email" value="${esc(savedEmail())}"></div>
       <div class="err" id="ferr"></div>${m}
       <button class="btn" type="submit">Enviar enlace</button>
       <button type="button" class="textbtn" data-a="authMode" data-v="login">Volver</button></form></div>`;
   if (S.auth === 'recovery') return `<div class="lock">${brand}<h1 style="font-size:20px">Nueva contraseña</h1>
     <form class="form" data-f="recovery" novalidate>
-      <div class="field"><label for="rc-p">Contraseña nueva</label><input class="inp" id="rc-p" type="password" required minlength="8" autocomplete="new-password"></div>
-      <div class="field"><label for="rc-p2">Repítela</label><input class="inp" id="rc-p2" type="password" required autocomplete="new-password"></div>
+      ${pwField('rc-p', 'Contraseña nueva', 'required minlength="8" autocomplete="new-password"')}
+      ${pwField('rc-p2', 'Repítela', 'required autocomplete="new-password"')}
       <div class="err" id="ferr"></div><button class="btn" type="submit">Guardar contraseña</button></form></div>`;
   return `<div class="lock">${brand}${pending}
     <form class="form" data-f="login" novalidate>
-      <div class="field"><label for="lg-e">Correo</label><input class="inp" id="lg-e" type="email" required autocomplete="username" inputmode="email"></div>
-      <div class="field"><label for="lg-p">Contraseña</label><input class="inp" id="lg-p" type="password" required autocomplete="current-password"></div>
+      <div class="field"><label for="lg-e">Correo</label><input class="inp" id="lg-e" type="email" required autocomplete="username" inputmode="email" value="${esc(savedEmail())}"></div>
+      ${pwField('lg-p', 'Contraseña', 'required autocomplete="current-password"')}
+      <label class="check"><input type="checkbox" id="lg-r" ${LS.get('rememberEmail', true) ? 'checked' : ''}> Recordar mi correo en este teléfono</label>
       <div class="err" id="ferr"></div>${m}
       <button class="btn" type="submit">Entrar</button>
       <button type="button" class="textbtn" data-a="authMode" data-v="forgot">Olvidé mi contraseña</button>
       <div class="muted" style="text-align:center;font-size:14px">¿Nuevo en Kuenta? <button type="button" class="textbtn" data-a="authMode" data-v="signup">Crear cuenta</button></div></form></div>`;
 }
+/* Campo de contraseña con botón para mostrarla u ocultarla */
+const pwField = (id, label, attrs) => `<div class="field"><label for="${id}">${label}</label><div class="pw"><input class="inp" id="${id}" type="password" ${attrs}>
+  <button type="button" class="pweye" data-a="togglePw" data-v="${id}" aria-label="Mostrar contraseña" aria-pressed="false">${ic('eye','sm')}</button></div></div>`;
+const savedEmail = () => LS.get('email', '');
 const strongPass = p => p.length >= 8 && /[A-Za-z]/.test(p) && /\d/.test(p);
 
 /* ============ PIN y biometría (candado local) ============ */
@@ -500,7 +507,7 @@ async function bioVerify(){
 function vLock(){
   const tries = LS.get('tries.' + me(), 0);
   return `<div class="lock">${brand}
-    <div style="text-align:center"><b style="font-size:17px">Hola, ${esc(firstName(S.profile.full_name))}</b><div class="muted" style="font-size:13.5px">Ingresa tu PIN para continuar</div></div>
+    <div style="text-align:center"><b style="font-size:17px">Hola, ${esc(firstName(S.profile.full_name))}</b><div class="muted" style="font-size:13.5px">${bioRec() ? 'Usa tu huella o Face ID, o ingresa tu PIN' : 'Ingresa tu PIN para continuar'}</div></div>
     <div class="dots" id="dots">${[0,1,2,3].map(i => `<i class="${i < S.pinEntry.length ? 'f' : ''}"></i>`).join('')}</div>
     <div class="err" style="min-height:20px">${tries ? `PIN incorrecto. Te quedan ${5 - tries} intentos.` : ''}</div>
     <div class="keys">${['1','2','3','4','5','6','7','8','9','bio','0','del'].map(k =>
@@ -522,7 +529,17 @@ function vPinSetup(){
       : `<button data-a="pinSetup" data-v="${k}" ${k === 'del' ? 'aria-label="Borrar" style="font-size:16px"' : ''}>${k === 'del' ? '⌫' : k}</button>`).join('')}</div>
     <button class="textbtn" data-a="signOut">Cerrar sesión</button></div>`;
 }
-function maybeLock(){ if (pinRec()){ S.locked = true; S.pinEntry = ''; } }
+/* La sesión se mantiene abierta en el teléfono: al abrir Kuenta solo se pide la huella o el PIN.
+   La contraseña solo se pide al entrar por primera vez, tras "Olvidé mi PIN" o tras 5 intentos fallidos. */
+let justLoggedIn = false;
+function maybeLock(){ if (pinRec()){ S.locked = true; S.pinEntry = ''; S.bioAsked = false; } }
+function unlock(){ LS.set('tries.' + me(), 0); S.locked = false; S.bioAsked = false; render(); }
+/* Al mostrar el candado, abre la huella o Face ID sin que haya que tocar nada */
+async function autoBio(){
+  if (S.bioAsked || !S.locked || !bioRec() || document.visibilityState !== 'visible') return;
+  S.bioAsked = true;
+  try { if (await bioVerify()) unlock(); } catch {}
+}
 
 /* ============ inicio ============ */
 function txRow(t){
@@ -1277,8 +1294,8 @@ function pinSheet(){
 }
 function passSheet(){
   openSheet(`${sheetHead('Cambiar contraseña')}<form class="form" data-f="pass" novalidate>
-    <div class="field"><label for="pw-1">Contraseña nueva</label><input class="inp" id="pw-1" type="password" minlength="8" autocomplete="new-password"></div>
-    <div class="field"><label for="pw-2">Repítela</label><input class="inp" id="pw-2" type="password" autocomplete="new-password"></div>
+    ${pwField('pw-1', 'Contraseña nueva', 'minlength="8" autocomplete="new-password"')}
+    ${pwField('pw-2', 'Repítela', 'autocomplete="new-password"')}
     <div class="err" id="ferr"></div><button class="btn" type="submit">Guardar</button></form>`);
 }
 function applyTheme(){ const t = LS.get('theme', 'system'); if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
@@ -1320,12 +1337,14 @@ const A = {
     $('#dots').innerHTML = [0,1,2,3].map(i => `<i class="${i < S.pinEntry.length ? 'f' : ''}"></i>`).join('');
     if (S.pinEntry.length < 4) return;
     const ok = await checkPin(S.pinEntry); S.pinEntry = '';
-    if (ok){ LS.set('tries.' + me(), 0); S.locked = false; render(); return; }
+    if (ok){ unlock(); return; }
     const tries = LS.get('tries.' + me(), 0) + 1; LS.set('tries.' + me(), tries);
     if (tries >= 5){ LS.del('pin.' + me()); LS.del('bio.' + me()); LS.set('tries.' + me(), 0); S.authMsg = '!Por seguridad cerramos tu sesión tras 5 intentos de PIN. Entra con tu correo y contraseña.'; await sb.auth.signOut(); return; }
     render(); $('#dots').classList.add('shake');
   },
-  bio: async () => { try { if (await bioVerify()){ LS.set('tries.' + me(), 0); S.locked = false; render(); } } catch { toast('No se pudo verificar tu huella. Usa tu PIN.', 'warn'); } },
+  bio: async () => { try { if (await bioVerify()) unlock(); } catch { toast('No se pudo verificar tu huella. Usa tu PIN.', 'warn'); } },
+  togglePw: el => { const i = $('#' + el.dataset.v), show = i.type === 'password'; i.type = show ? 'text' : 'password';
+    el.innerHTML = ic(show ? 'eyeoff' : 'eye', 'sm'); el.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña'); el.setAttribute('aria-pressed', show); i.focus(); },
   pinSetup: async el => {
     const v = el.dataset.v;
     S.pinEntry = v === 'del' ? S.pinEntry.slice(0, -1) : (S.pinEntry + v).slice(0, 4); S.form.pinErr = '';
@@ -1336,7 +1355,7 @@ const A = {
     if (await bioAvailable()) toast('PIN creado. ¿Activar también tu huella o Face ID?', 'ok', {label:'Activar', run: async () => { await bioEnroll(); toast('Huella activada'); }});
     else toast('PIN creado');
   },
-  lockNow: () => { S.locked = true; S.pinEntry = ''; closeSheet(); render(); },
+  lockNow: () => { maybeLock(); closeSheet(); render(); },
   add: el => startAdd(el.dataset.v),
   payTithe: el => {
     const tc = S.categories.find(c => c.scope === 'p' && isTitheCat(c) && !c.archived);
@@ -1438,8 +1457,12 @@ const F = {
     const email = $('#lg-e').value.trim(), password = $('#lg-p').value, err = $('#ferr');
     if (!email || !password) return (err.textContent = 'Escribe tu correo y contraseña.');
     S.authMsg = '';
+    const remember = $('#lg-r').checked; LS.set('rememberEmail', remember);
+    if (remember) LS.set('email', email); else LS.del('email');
+    justLoggedIn = true;
     try { await q(sb.auth.signInWithPassword({email, password})); }
     catch (e) {
+      justLoggedIn = false;
       if (/Email not confirmed/i.test(String(e?.message || ''))){ S.auth = 'verify'; S.verifyEmail = email; S.authMsg = '!Todavía no confirmas tu correo. Sigue estos pasos o reenvía el correo.'; render(); return; }
       throw e;
     }
@@ -1453,6 +1476,7 @@ const F = {
     const inv = pendingInvite();
     const redirect = location.origin + location.pathname + (inv ? `?invite=${inv}` : '');
     const data = await q(sb.auth.signUp({email, password:p1, options:{data:{full_name:name}, emailRedirectTo:redirect}}));
+    if (LS.get('rememberEmail', true)) LS.set('email', email);
     if (!data.session){ S.auth = 'verify'; S.verifyEmail = email; S.authMsg = ''; render(); }
   },
   forgot: async () => {
@@ -1482,6 +1506,7 @@ const F = {
     await deleteMyFiles(familySurvives);
     await q(sb.rpc('delete_my_account', {p_family_action:action, p_new_owner:newOwner}));
     ['pin.', 'bio.', 'tries.', 'lastAcc.', 'lastTx.', 'push.', 'remDone.'].forEach(k => LS.del(k + uid));
+    LS.del('email');
     S.authMsg = 'Tu cuenta fue eliminada. Gracias por usar Kuenta.';
     closeSheet();
     await sb.auth.signOut({scope:'local'}).catch(() => {});
@@ -1752,7 +1777,7 @@ function vScheduled(){
   act.forEach(s => { if ((acc(s.acc)?.cur || 'HNL') !== 'HNL') return; const k = schDueUntil(s, p.end).length; tot += k * s.amount; n += k; });
   const wk = addDays(TODAY, 7);
   const grp = (t, arr) => arr.length ? `<div class="section"><div class="sec-h"><h2>${t}</h2></div><div class="list">${arr.map(schRow).join('')}</div></div>` : '';
-  return `${subhead('Pagos programados', S.v06 && writableAccounts().length ? `<button class="btn sm" data-a="schNew">${ic('plus','sm')} Nuevo</button>` : '')}${needs06()}
+  return `${subhead('Pagos programados', S.v06 && writableAccounts().length ? `<button class="iconbtn" data-a="schNew" aria-label="Nuevo pago programado" style="background:var(--brand);color:var(--on-brand);border:0">${ic('plus','sm')}</button>` : '')}${needs06()}
   <div class="panel"><div class="eyebrow">Por pagar hasta el ${dShort(p.end)}</div><div class="num" style="font-size:24px;font-weight:700;margin-top:2px">${money(tot)}</div>
     <small class="muted">${n} ${n === 1 ? 'pago' : 'pagos'} en tu mes financiero · te avisamos un día antes y el mismo día</small></div>
   ${grp('Atrasados', act.filter(s => s.next < TODAY))}${grp('Próximos 7 días', act.filter(s => s.next >= TODAY && s.next <= wk))}
@@ -1790,7 +1815,7 @@ function schSheet(id){
     <div class="panel"><table class="rep"><tr><td class="muted">Frecuencia</td><td class="r">${FREQ[s.freq]}</td></tr>
       <tr><td class="muted">Cuenta</td><td class="r">${esc(a?.name || '—')}</td></tr><tr><td class="muted">Categoría</td><td class="r">${esc(c.icon)} ${esc(c.name)}</td></tr>
       ${s.end ? `<tr><td class="muted">Hasta</td><td class="r">${dShort(s.end)} ${s.end.slice(0, 4)}</td></tr>` : ''}
-      <tr><td class="muted">Avisos</td><td class="r">${[s.before && 'Un día antes', s.same && 'El mismo día'].filter(Boolean).join(' y ') || 'Sin aviso'}</td></tr></table></div>
+      <tr><td class="muted">Avisos</td><td class="r">${[s.before && 'Un día antes', s.same && (s.before ? 'el mismo día' : 'El mismo día')].filter(Boolean).join(' y ') || 'Sin aviso'}</td></tr></table></div>
     ${ed && s.active ? `<form class="form" data-f="schPay" data-id="${s.id}" style="margin-top:14px" novalidate>
       <div class="row2"><div class="field"><label for="sp-pa">Monto pagado</label><input class="inp" id="sp-pa" inputmode="decimal" value="${s.amount}"></div>
       <div class="field"><label for="sp-pd">Fecha</label><input class="inp" id="sp-pd" type="date" value="${s.next <= TODAY ? s.next : TODAY}" max="${TODAY}"></div></div>
@@ -2535,7 +2560,8 @@ document.addEventListener('visibilitychange', async () => {
   TODAY = localISO(new Date());
   if (!S.user || !S.profile) return;
   const away = Date.now() - hiddenAt;
-  if (hiddenAt && pinRec() && !S.locked && away > LOCK_MINUTES * 60000){ S.locked = true; S.pinEntry = ''; closeSheet(); render(); }
+  if (hiddenAt && pinRec() && !S.locked && away > LOCK_MINUTES * 60000){ maybeLock(); closeSheet(); render(); }
+  if (S.locked) autoBio();
   if (Date.now() - S.loadedAt > 60000 && $('#sheet').hidden){ try { await loadAll(); render(); } catch {} }
   localReminderTick();
 });
@@ -2575,7 +2601,8 @@ function init(){
       if (S.auth === 'recovery' && event !== 'SIGNED_OUT') return;
       if (session?.user && S.user?.id !== session.user.id){
         const msg = S.authMsg; resetState(); S.authMsg = msg; S.user = session.user;
-        boot(event === 'SIGNED_IN');
+        const fresh = justLoggedIn; justLoggedIn = false;
+        boot(fresh);
       } else if (session?.user){ S.user = session.user; }
       else if (!session){ const msg = S.authMsg; resetState(); S.authMsg = msg; closeSheet(); render(); }
     }, 0);
