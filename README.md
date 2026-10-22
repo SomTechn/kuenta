@@ -12,6 +12,8 @@ App web instalable (PWA) en HTML, CSS y JavaScript puro, con Supabase como base 
 | `sw.js` | Permite instalar la app y abrirla rápido (no guarda datos financieros) |
 | `manifest.json` + `icons/` | Nombre, colores e íconos al instalarla en el teléfono |
 | `vercel.json` | Encabezados de seguridad para Vercel |
+| `supabase/migrations/` | Cambios de la base de datos (ejecutar en orden en SQL Editor) |
+| `supabase/functions/send-push/` | Función que envía las notificaciones push |
 
 ## Puesta en marcha (una sola vez)
 
@@ -39,6 +41,26 @@ Abre `config.js` y pega:
 - **GitHub Pages**: también funciona; la política de seguridad viaja en el `<meta>` de `index.html`.
 
 La app debe abrirse con **https** para que funcionen la huella, la instalación y la descarga de informes.
+
+## Recordatorios, pagos programados, deudas y ahorro (actualización 06)
+
+Funciones nuevas en **Más**:
+- **Recordatorios**: avisos para registrar movimientos (por defecto 9:00 a. m., 1:00 p. m. y 8:00 p. m., editables, hasta 6). No insiste si registraste algo en las últimas 3 horas.
+- **Pagos programados**: gastos recurrentes (semanal, cada 2 semanas, mensual, bimestral, trimestral, anual o una vez). Aviso un día antes y el mismo día; botón para registrar el pago y pasar al siguiente.
+- **Deudas**: préstamos, tarjetas, hipotecas, cooperativas o deudas con familiares, incluso los que ya tienen tiempo (estima el saldo según la fecha del préstamo). Cuotas, interés sobre saldo o flat, registro de pagos (capital/interés, abonos extra), tabla de amortización, simulador con abono extra, comparación avalancha vs. bola de nieve y sugerencias personalizadas.
+- **Ahorro inteligente**: plan de ahorro según tus ingresos y gastos reales, niveles (🌱 → 🦁), racha de días registrando, logros, gastos hormiga, regla 50/30/20 y retos virales (100 sobres, 52 semanas, 30 días sin gastos hormiga, semana sin gastar, redondeo) con imagen para compartir en historias (solo porcentajes, nunca montos).
+
+### Puesta en marcha
+1. Ejecuta `supabase/migrations/06_recordatorios_deudas_ahorro.sql` completo en **SQL Editor** (es aditivo: no modifica datos existentes). Activa `pg_cron` y `pg_net` y programa la tarea `kuenta-reminders` cada 15 minutos, que crea los avisos en **Alertas**.
+2. Publica la función de notificaciones: `supabase functions deploy send-push --no-verify-jwt` (se protege sola con un secreto interno).
+3. Guarda su URL en **SQL Editor**:
+   ```sql
+   update public.push_config set function_url = 'https://<tu-proyecto>.supabase.co/functions/v1/send-push';
+   ```
+
+No hay claves que copiar: la primera vez que corre, la función genera sus claves VAPID y las guarda en `public.push_config`, una tabla que la app no puede leer (la clave privada nunca sale del servidor). La app pide la clave pública con `vapid_public_key()`.
+
+Cada persona activa las notificaciones en **Más → Recordatorios**. En iPhone primero hay que instalar Kuenta en la pantalla de inicio (iOS 16.4 o superior). Si la función no está publicada, los avisos igual aparecen en Alertas y los recordatorios llegan mientras Kuenta esté abierta.
 
 ## Seguridad incluida
 - Reglas **RLS** en todas las tablas; las operaciones sensibles (transferencias, familia, invitaciones) son funciones del servidor.
