@@ -86,6 +86,7 @@ const P = {
   card:'M3 6h18v12H3zM3 10h18M7 15h4',
   spark:'M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z',
   share:'M12 3v12M7 8l5-5 5 5M5 14v6h14v-6',
+  edit:'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
   eye:'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   eyeoff:'M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2'
 };
@@ -264,7 +265,19 @@ const q = async p => { const {data, error} = await p; if (error) throw error; re
 const mapAcc = r => ({id:r.id, name:r.name, type:r.type, cur:r.currency, init:+r.initial_balance, limit:r.credit_limit == null ? null : +r.credit_limit,
   color:r.color, icon:r.icon, shared:!!r.family_id, family_id:r.family_id, owner:r.owner_id, archived:r.is_archived, sort:r.sort_order});
 const mapCat = r => ({id:r.id, scope:r.family_id ? 'f' : 'p', name:r.name, kind:r.kind, icon:r.icon, color:r.color, parent:r.parent_id, archived:r.is_archived, sort:r.sort_order});
-const mapTx = r => ({id:r.id, acc:r.account_id, cat:r.category_id, type:r.type, amount:+r.amount, date:r.occurred_on, desc:r.description || '', note:r.notes || '', by:r.created_by, tg:r.transfer_group});
+/* Hora del movimiento: la indicada (migración 07) o, si no hay, la hora en que se registró ese mismo día */
+const nowHM = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+function txTime(r){
+  if (r.occurred_time) return r.occurred_time.slice(0, 5);
+  if (!r.created_at) return '';
+  const c = new Date(r.created_at);
+  return localISO(c) === r.occurred_on ? `${pad(c.getHours())}:${pad(c.getMinutes())}` : '';
+}
+const mapTx = r => ({id:r.id, acc:r.account_id, cat:r.category_id, type:r.type, amount:+r.amount, date:r.occurred_on, time:txTime(r), desc:r.description || '', note:r.notes || '', by:r.created_by, tg:r.transfer_group});
+const txKey = t => t.date + ' ' + (t.time || '00:00');
+const byNewest = (a, b) => txKey(b).localeCompare(txKey(a));
+/* Agrega la hora a una fila nueva o editada, solo si la base ya tiene la columna */
+const withTime = (row, time) => S.hasTime ? {...row, occurred_time:time || null} : row;
 const mapBud = r => ({id:r.id, cat:r.category_id, amount:+r.amount, alert:r.alert_percent, cur:r.currency});
 const mapGoal = r => ({id:r.id, scope:r.family_id ? 'f' : 'p', name:r.name, target:+r.target_amount, date:r.target_date, icon:r.icon, color:r.color, linked:r.account_id, status:r.status, contrib:[]});
 
@@ -307,9 +320,16 @@ async function loadGoals(){
 }
 async function loadTx(){
   S.txFrom = addMonths(period().start, -HISTORY_MONTHS);
+  const cols = 'id,account_id,category_id,type,amount,occurred_on,description,notes,created_by,transfer_group,created_at';
+  const txQuery = withHour => fetchAll(() => sb.from('transactions').select(cols + (withHour ? ',occurred_time' : ''))
+    .gte('occurred_on', S.txFrom).order('occurred_on', {ascending:false}).order('created_at', {ascending:false}));
+  // Si la base aún no tiene la columna de hora (migración 07), la app sigue funcionando sin ella
+  const txRows = S.hasTime === false ? txQuery(false) : txQuery(true).then(r => { S.hasTime = true; return r; }, e => {
+    if (!/occurred_time/.test(String(e?.message || ''))) throw e;
+    S.hasTime = false; return txQuery(false);
+  });
   const [rows, atts] = await Promise.all([
-    fetchAll(() => sb.from('transactions').select('id,account_id,category_id,type,amount,occurred_on,description,notes,created_by,transfer_group')
-      .gte('occurred_on', S.txFrom).order('occurred_on', {ascending:false}).order('created_at', {ascending:false})),
+    txRows,
     fetchAll(() => sb.from('attachments').select('id,transaction_id,storage_path,mime_type,uploaded_by'))
   ]);
   S.tx = rows.map(mapTx);
@@ -542,7 +562,7 @@ async function autoBio(){
 }
 
 /* ============ inicio ============ */
-function txRow(t){
+function txRow(t, inDay = false){
   const a = acc(t.acc); if (!a) return '';
   let icon, color, title, sub, sign, cls = '';
   if (t.tg){
@@ -559,7 +579,7 @@ function txRow(t){
   return `<button class="tx" data-a="txDetail" data-v="${t.id}">
     <span class="tile" style="background:${soft(color)};color:${color}">${esc(icon)}</span>
     <span class="mid"><b>${esc(title)}</b><small>${S.atts[t.id] ? ic('clip','sm') : ''}${esc(sub)}</small></span>
-    ${by}<span class="amt"><b class="${cls}">${sign > 0 ? '+' : '−'}${money(t.amount, a.cur).replace('−','')}</b><small>${dShort(t.date)}</small></span></button>`;
+    ${by}<span class="amt"><b class="${cls}">${sign > 0 ? '+' : '−'}${money(t.amount, a.cur).replace('−','')}</b><small>${inDay ? (t.time ? fmtTime(t.time) : '') : dShort(t.date) + (t.time ? ' · ' + fmtTime(t.time) : '')}</small></span></button>`;
 }
 function accCard(a){
   const b = balance(a);
@@ -631,7 +651,7 @@ function vHome(){
   const totalUSD = accs.filter(a => a.cur === 'USD').reduce((s, a) => s + balance(a), 0);
   const unread = S.notifs.filter(n => !n.read_at).length;
   const buds = S.budgets.map(b => ({b, ...budgetInfo(b)})).sort((x, y) => y.pct - x.pct).slice(0, 3);
-  const recent = [...S.tx].sort((x, y) => y.date.localeCompare(x.date)).slice(0, 6);
+  const recent = [...S.tx].sort(byNewest).slice(0, 6);
   const name = firstName(S.profile.full_name), up = upcoming(7);
   return `
   <div class="top"><div class="hello"><div class="avatar">${esc(name[0])}</div><div style="min-width:0"><b>Hola, ${esc(name)}</b><small>Mes financiero · ${dShort(p.start)} – ${dShort(p.end)}</small></div></div>
@@ -681,10 +701,10 @@ function vTx(){
     : u.txFilter === 'generosity' ? (!t.tg && cat(t.cat).kind === 'generosity')
     : t.type === 'expense' && cat(t.cat).kind === 'expense');
   if (u.txQuery){ const qq = u.txQuery.toLowerCase(); list = list.filter(t => t.desc.toLowerCase().includes(qq) || (!t.tg && cat(t.cat).name.toLowerCase().includes(qq)) || t.note.toLowerCase().includes(qq)); }
-  list = [...list].sort((a, b) => b.date.localeCompare(a.date));
+  list = [...list].sort(byNewest);
   const lim = S.ui.txLimit || 150;
   let html = '', day = '';
-  for (const t of list.slice(0, lim)){ if (t.date !== day){ day = t.date; html += `<div class="dayh">${dLong(day)}</div>`; } html += txRow(t); }
+  for (const t of list.slice(0, lim)){ if (t.date !== day){ day = t.date; html += `<div class="dayh">${dLong(day)}</div>`; } html += txRow(t, true); }
   const f = [['all','Todos'],['expense','Gastos'],['income','Ingresos'],['generosity','Generosidad'],['transfer','Transferencias']];
   return `<div class="subhead"><h1>Movimientos</h1></div>
   <div class="search">${ic('search','sm')}<input id="q" type="search" placeholder="Buscar por comercio, nota o categoría" value="${esc(u.txQuery)}" data-in="txQuery" aria-label="Buscar"></div>
@@ -709,7 +729,7 @@ async function txDetail(id){
       ${c ? `<tr><td class="muted">Categoría</td><td class="r">${esc(c.icon)} ${esc(c.parent ? cat(c.parent).name + ' › ' : '')}${esc(c.name)}</td></tr>` : ''}
       <tr><td class="muted">${t.tg ? 'Desde' : 'Cuenta'}</td><td class="r">${esc(t.tg ? (fromA?.name || '—') : a.name)}</td></tr>
       ${t.tg ? `<tr><td class="muted">Hacia</td><td class="r">${esc(toA?.name || '—')}</td></tr>` : ''}
-      <tr><td class="muted">Fecha</td><td class="r" style="text-transform:capitalize">${dLong(t.date)}</td></tr>
+      <tr><td class="muted">Fecha${t.time ? ' y hora' : ''}</td><td class="r">${dLong(t.date)}${t.time ? ' · ' + fmtTime(t.time) : ''}</td></tr>
       <tr><td class="muted">Registrado por</td><td class="r">${esc(uname(t.by))}</td></tr>
       ${t.note ? `<tr><td class="muted">Nota</td><td class="r" style="white-space:normal">${esc(t.note)}</td></tr>` : ''}
     </table></div>
@@ -717,7 +737,8 @@ async function txDetail(id){
       ${atts.length ? '<div class="spin" style="margin:10px auto"></div>' : editable ? `<label class="upload">${ic('camera')} Adjuntar foto o PDF<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" data-up="${t.id}"></label>` : '<div class="empty">Sin comprobante</div>'}
     </div></div>`}
     <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
-      ${editable ? `<div id="delbox"><button class="btn danger" data-a="askDel" data-v="${t.id}">${ic('trash','sm')} Eliminar ${t.tg ? 'transferencia' : 'movimiento'}</button></div>`
+      ${editable ? `<button class="btn" data-a="editTx" data-v="${t.id}">${ic('edit','sm')} Editar ${t.tg ? 'transferencia' : 'movimiento'}</button>
+        <div id="delbox"><button class="btn danger" data-a="askDel" data-v="${t.id}">${ic('trash','sm')} Eliminar ${t.tg ? 'transferencia' : 'movimiento'}</button></div>`
       : `<div class="note">${role() === 'viewer' && a.shared ? 'Tu rol es de solo lectura.' : 'Solo quien lo registró o el dueño de la familia puede modificarlo.'}</div>`}
     </div>`);
   if (atts.length){
@@ -769,8 +790,21 @@ function startAdd(type){
   if (type === 'transfer' && accs.length < 2){ toast('Necesitas al menos dos cuentas para transferir.', 'warn'); return; }
   const last = LS.get('lastAcc.' + me());
   const first = accs.find(a => a.id === last) || accs.find(a => !a.shared) || accs[0];
-  S.draft = {type, amount:'0', acc:first.id, cat:null, date:TODAY, desc:'', note:'', file:null, preview:null, step:1,
+  S.draft = {type, amount:'0', acc:first.id, cat:null, date:TODAY, time:nowHM(), desc:'', note:'', file:null, preview:null, step:1,
     from:first.id, to:(accs.find(a => a.id !== first.id) || first).id, toAmount:''};
+  renderAdd();
+}
+/* Editar un movimiento: el mismo formulario de registro, con sus datos cargados */
+function startEdit(id){
+  const t = S.tx.find(x => x.id === id); if (!t || !canEditTx(t)) return;
+  const base = {amount:String(t.amount), date:t.date, time:t.time, desc:t.desc, note:t.note, file:null, preview:null, fresh:true};
+  if (t.tg){
+    const out = t.type === 'transfer_out' ? t : S.tx.find(x => x.tg === t.tg && x.type === 'transfer_out');
+    const inn = S.tx.find(x => x.tg === t.tg && x.type === 'transfer_in');
+    if (!out || !inn) return toast('No se encontró la otra parte de la transferencia.', 'over');
+    S.draft = {...base, type:'transfer', amount:String(out.amount), from:out.acc, to:inn.acc, toAmount:acc(out.acc)?.cur !== acc(inn.acc)?.cur ? String(inn.amount) : '',
+      desc:out.desc, editTg:t.tg, acc:out.acc, cat:null, step:1};
+  } else S.draft = {...base, type:t.type, acc:t.acc, cat:t.cat, step:1, editId:t.id};
   renderAdd();
 }
 function amountText(d){
@@ -782,32 +816,38 @@ function renderAdd(){
   const d = S.draft, accs = writableAccounts();
   // Solo el dueño de la familia saca dinero de una cuenta compartida
   const fromAccs = isOwner() ? accs : accs.filter(a => !a.shared);
-  const seg = `<div class="seg" style="margin-bottom:12px">${[['expense','Gasto'],['income','Ingreso'],['transfer','Transferir']].map(([k, l]) =>
-    `<button class="${d.type === k ? 'on' : ''}" data-a="dType" data-v="${k}">${l}</button>`).join('')}</div>`;
+  const editing = !!(d.editId || d.editTg), title = editing ? 'Editar movimiento' : 'Nuevo movimiento';
+  // Al editar no se puede convertir un gasto en transferencia ni al revés
+  const types = d.editTg ? [] : d.editId ? [['expense','Gasto'],['income','Ingreso']] : [['expense','Gasto'],['income','Ingreso'],['transfer','Transferir']];
+  const seg = types.length ? `<div class="seg" style="margin-bottom:12px">${types.map(([k, l]) =>
+    `<button class="${d.type === k ? 'on' : ''}" data-a="dType" data-v="${k}">${l}</button>`).join('')}</div>` : '';
+  const when = `<div class="row2"><div class="field"><label for="dDate">Fecha</label><input class="inp" id="dDate" type="date" value="${d.date}" max="${TODAY}" data-in="date"></div>
+      ${S.hasTime ? `<div class="field"><label for="dTime">Hora</label><input class="inp" id="dTime" type="time" value="${esc(d.time || '')}" data-in="time"></div>` : ''}</div>`;
   const accChips = (key, label) => `<div class="eyebrow" style="margin:12px 0 6px">${label}</div><div class="accsel">${(key === 'from' ? fromAccs : accs).map(a =>
     `<button class="${d[key] === a.id ? 'on' : ''}" data-a="dAcc" data-k="${key}" data-v="${a.id}"><span style="font-size:18px">${esc(a.icon)}</span><span>${esc(a.name)}<small class="num">${money(balance(a), a.cur)}</small></span></button>`).join('')}</div>`;
   const keypad = `<div class="keys">${['1','2','3','4','5','6','7','8','9','.','0','del'].map(k =>
     `<button data-a="key" data-v="${k}" ${k === 'del' ? 'aria-label="Borrar"' : ''}>${k === 'del' ? '⌫' : k}</button>`).join('')}</div>`;
-  const amt = `<div class="amount"><span class="num" id="amt">${amountText(d)}</span></div>`;
+  const amt = `<div class="amount"><span class="num ${d.fresh ? 'fresh' : ''}" id="amt">${amountText(d)}</span>${d.fresh ? '<small class="muted" style="display:block;font-size:12px">Escribe para cambiar el monto</small>' : ''}</div>`;
   if (d.type === 'transfer'){
     if (!fromAccs.length){
-      openSheet(`${sheetHead('Nuevo movimiento')}${seg}<div class="empty">Para transferir necesitas una cuenta personal. Solo el dueño de la familia puede sacar dinero de las cuentas compartidas.</div>`);
+      openSheet(`${sheetHead(title)}${seg}<div class="empty">Para transferir necesitas una cuenta personal. Solo el dueño de la familia puede sacar dinero de las cuentas compartidas.</div>`);
       return;
     }
     if (!fromAccs.some(a => a.id === d.from)) d.from = fromAccs[0].id;
     if (d.to === d.from) d.to = (accs.find(a => a.id !== d.from) || accs[0]).id;
     const fa = acc(d.from), ta = acc(d.to), diff = fa.cur !== ta.cur;
-    openSheet(`${sheetHead('Nuevo movimiento')}${seg}${amt}${accChips('from','Desde')}${accChips('to','Hacia')}
+    openSheet(`${sheetHead(title)}${seg}${amt}${accChips('from','Desde')}${accChips('to','Hacia')}
       ${diff ? `<div class="field" style="margin-top:12px"><label for="toAmt">Monto que recibe ${esc(ta.name)} (${ta.cur})</label><input class="inp" id="toAmt" inputmode="decimal" placeholder="Monedas distintas: indica el monto recibido" value="${esc(d.toAmount)}" data-in="toAmount"></div>` : ''}
       <div class="field" style="margin-top:12px"><label for="trDesc">Descripción (opcional)</label><input class="inp" id="trDesc" maxlength="120" value="${esc(d.desc)}" data-in="desc" placeholder="Ej: Aporte a la casa"></div>
+      <div class="field" style="margin-top:12px"><label for="dDate">Fecha</label><input class="inp" id="dDate" type="date" value="${d.date}" max="${TODAY}" data-in="date"></div>
       <div class="err" id="derr" style="margin-top:8px"></div>${keypad}
-      <button class="btn" style="margin-top:12px" data-a="saveTransfer">${ic('swap','sm')} Transferir</button>`);
+      <button class="btn" style="margin-top:12px" data-a="saveTransfer">${ic(editing ? 'check' : 'swap','sm')} ${editing ? 'Guardar cambios' : 'Transferir'}</button>`);
     return;
   }
   if (d.step === 1){
-    openSheet(`${sheetHead('Nuevo movimiento')}${seg}${amt}${accChips('acc','Cuenta')}${keypad}
+    openSheet(`${sheetHead(title)}${seg}${amt}${accChips('acc','Cuenta')}${keypad}
       <div class="err" id="derr" style="margin-top:8px"></div>
-      <button class="btn" style="margin-top:6px" data-a="dNext">Elegir categoría ${ic('right','sm')}</button>`);
+      <button class="btn" style="margin-top:6px" data-a="dNext">${editing ? 'Siguiente' : 'Elegir categoría'} ${ic('right','sm')}</button>`);
     return;
   }
   const a = acc(d.acc), sc = a.shared ? 'f' : 'p';
@@ -823,21 +863,36 @@ function renderAdd(){
     ${cats.length ? `<div class="catgrid">${cats.map(c => `<button class="${d.cat === c.id ? 'on' : ''}" data-a="dCat" data-v="${c.id}"><span class="e">${esc(c.icon)}</span>${esc(c.name)}</button>`).join('')}</div>`
       : '<div class="empty">No hay categorías para esta cuenta. Créalas en Más → Categorías.</div>'}
     <div class="form" style="margin-top:16px">
-      <div class="row2"><div class="field"><label for="dDate">Fecha</label><input class="inp" id="dDate" type="date" value="${d.date}" max="${TODAY}" data-in="date"></div>
-      <div class="field"><label for="dDesc">Descripción</label><input class="inp" id="dDesc" maxlength="120" placeholder="Ej: La Colonia" value="${esc(d.desc)}" data-in="desc"></div></div>
+      ${when}
+      <div class="field"><label for="dDesc">Descripción</label><input class="inp" id="dDesc" maxlength="120" placeholder="Ej: La Colonia" value="${esc(d.desc)}" data-in="desc"></div>
       <div class="field"><label for="dNote">Nota (opcional)</label><input class="inp" id="dNote" maxlength="500" value="${esc(d.note)}" data-in="note"></div>
-      ${d.file ? `<div class="receipt">${d.preview ? `<img src="${d.preview}" alt="Comprobante adjunto">` : `<div class="note">${ic('file','sm')} ${esc(d.file.name)}</div>`}</div><button type="button" class="textbtn" data-a="dRmFile">Quitar comprobante</button>`
+      ${editing ? '' : d.file ? `<div class="receipt">${d.preview ? `<img src="${d.preview}" alt="Comprobante adjunto">` : `<div class="note">${ic('file','sm')} ${esc(d.file.name)}</div>`}</div><button type="button" class="textbtn" data-a="dRmFile">Quitar comprobante</button>`
         : `<label class="upload">${ic('camera')} Adjuntar comprobante (opcional)<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" data-up="draft"></label>`}
       <div class="err" id="derr"></div>
-      <button class="btn" data-a="saveTx" ${d.cat ? '' : 'disabled'}>${ic('check','sm')} Guardar ${d.type === 'income' ? 'ingreso' : 'gasto'}</button>
+      <button class="btn" data-a="saveTx" ${d.cat ? '' : 'disabled'}>${ic('check','sm')} ${editing ? 'Guardar cambios' : 'Guardar ' + (d.type === 'income' ? 'ingreso' : 'gasto')}</button>
     </div>`);
+}
+/* La fecha y la hora no pueden estar en el futuro (5 minutos de margen) */
+function whenError(d){
+  if (!d.date || d.date > TODAY) return 'La fecha no puede ser futura.';
+  if (S.hasTime && d.time && !/^([01]\d|2[0-3]):[0-5]\d/.test(d.time)) return 'Revisa la hora.';
+  if (S.hasTime && d.time && d.date === TODAY && d.time > (() => { const x = new Date(Date.now() + 5 * 60000); return localISO(x) > TODAY ? '23:59' : `${pad(x.getHours())}:${pad(x.getMinutes())}`; })()) return 'La hora no puede ser futura.';
+  return '';
 }
 async function saveTx(){
   const d = S.draft, amount = round2(Number(d.amount)), c = cat(d.cat), a = acc(d.acc);
   if (!(amount > 0)) return ($('#derr').textContent = 'Escribe un monto mayor que cero.');
-  if (!d.date || d.date > TODAY) return ($('#derr').textContent = 'La fecha no puede ser futura.');
-  const row = await q(sb.from('transactions').insert({account_id:d.acc, category_id:d.cat, type:d.type, amount, occurred_on:d.date,
-    description:d.desc.trim().slice(0, 120) || null, notes:d.note.trim().slice(0, 500) || null, created_by:me()}).select().single());
+  const we = whenError(d); if (we) return ($('#derr').textContent = we);
+  const fields = withTime({account_id:d.acc, category_id:d.cat, type:d.type, amount, occurred_on:d.date,
+    description:d.desc.trim().slice(0, 120) || null, notes:d.note.trim().slice(0, 500) || null}, d.time && d.time.slice(0, 5));
+  if (d.editId){
+    const row = await q(sb.from('transactions').update(fields).eq('id', d.editId).select().single());
+    const i = S.tx.findIndex(x => x.id === d.editId); if (i >= 0) S.tx[i] = mapTx(row);
+    LS.set('lastAcc.' + me(), d.acc); closeSheet(); S.draft = null;
+    await afterWrite(); render(); txDetail(row.id); toast('Cambios guardados');
+    return;
+  }
+  const row = await q(sb.from('transactions').insert({...fields, created_by:me()}).select().single());
   const t = mapTx(row); S.tx.unshift(t);
   LS.set('lastAcc.' + me(), d.acc); LS.set('lastTx.' + me(), Date.now()); markRemindersRead();
   const file = d.file; closeSheet(); S.draft = null; render();
@@ -849,8 +904,8 @@ async function saveTx(){
     if (!a.shared && pct > 0 && tithe && a.cur === 'HNL'){
       const amt = round2(t.amount * pct / 100);
       toast(`Ingreso guardado. ¿Registrar diezmo de ${money(amt)}?`, 'ok', {label:'Registrar', run: async () => {
-        const r = await q(sb.from('transactions').insert({account_id:t.acc, category_id:tithe.id, type:'expense', amount:amt, occurred_on:t.date,
-          description:('Diezmo de ' + (t.desc || c.name)).slice(0, 120), created_by:me()}).select().single());
+        const r = await q(sb.from('transactions').insert(withTime({account_id:t.acc, category_id:tithe.id, type:'expense', amount:amt, occurred_on:t.date,
+          description:('Diezmo de ' + (t.desc || c.name)).slice(0, 120), created_by:me()}, t.time)).select().single());
         S.tx.unshift(mapTx(r)); await afterWrite(); render(); toast('Diezmo registrado');
       }});
     } else toast('Ingreso guardado');
@@ -864,10 +919,13 @@ async function saveTransfer(){
   if (!(amount > 0)) return (err.textContent = 'Escribe un monto mayor que cero.');
   let toAmt = null;
   if (fa.cur !== ta.cur){ toAmt = round2(parseAmt(d.toAmount)); if (!(toAmt > 0)) return (err.textContent = `Indica cuánto recibe ${ta.name} en ${ta.cur}.`); }
-  await q(sb.rpc('create_transfer', {p_from:fa.id, p_to:ta.id, p_amount:amount, p_date:TODAY,
+  if (!d.date || d.date > TODAY) return (err.textContent = 'La fecha no puede ser futura.');
+  // Editar = crear la nueva y luego borrar la anterior (si algo falla, nunca se pierde dinero: a lo sumo queda duplicada)
+  await q(sb.rpc('create_transfer', {p_from:fa.id, p_to:ta.id, p_amount:amount, p_date:d.date,
     p_description:(d.desc.trim() || `${fa.name} → ${ta.name}`).slice(0, 120), p_to_amount:toAmt}));
-  closeSheet(); S.draft = null;
-  await Promise.all([loadTx(), afterWrite()]); render(); toast('Transferencia realizada');
+  if (d.editTg) await q(sb.rpc('delete_transfer', {p_group:d.editTg}));
+  const edited = !!d.editTg; closeSheet(); S.draft = null;
+  await Promise.all([loadTx(), afterWrite()]); render(); toast(edited ? 'Transferencia actualizada' : 'Transferencia realizada');
 }
 
 /* ============ estadísticas ============ */
@@ -1121,7 +1179,7 @@ function catSheet(id){
 function repTx(){
   const u = S.ui;
   return S.tx.filter(t => !t.tg && t.date >= u.repFrom && t.date <= u.repTo && (u.repScope === 'family') === !!acc(t.acc)?.shared)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => txKey(a).localeCompare(txKey(b)));
 }
 function vReports(){
   const u = S.ui, p = period(TODAY, dayFor(u.repScope));
@@ -1159,9 +1217,9 @@ function download(blob, name){
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function exportCsv(){
-  const rows = [['Fecha','Tipo','Categoría','Subcategoría','Descripción','Nota','Cuenta','Moneda','Monto','Registrado por']];
+  const rows = [['Fecha','Hora','Tipo','Categoría','Subcategoría','Descripción','Nota','Cuenta','Moneda','Monto','Registrado por']];
   repTx().forEach(t => { const c = cat(t.cat), a = acc(t.acc), r = rootOf(c);
-    rows.push([t.date, t.type === 'income' ? 'Ingreso' : c.kind === 'generosity' ? 'Generosidad' : 'Gasto', r.name, c.parent ? c.name : '', t.desc, t.note, a.name, a.cur, (t.type === 'income' ? '' : '-') + t.amount.toFixed(2), uname(t.by)]); });
+    rows.push([t.date, t.time, t.type === 'income' ? 'Ingreso' : c.kind === 'generosity' ? 'Generosidad' : 'Gasto', r.name, c.parent ? c.name : '', t.desc, t.note, a.name, a.cur, (t.type === 'income' ? '' : '-') + t.amount.toFixed(2), uname(t.by)]); });
   const csv = '﻿' + rows.map(r => r.map(x => { let s = String(x ?? ''); if (/^[=+\-@]/.test(s) && isNaN(Number(s))) s = "'" + s; return `"${s.replace(/"/g, '""')}"`; }).join(',')).join('\r\n');
   download(new Blob([csv], {type:'text/csv;charset=utf-8'}), `kuenta-${S.ui.repFrom}_${S.ui.repTo}.csv`);
   toast('Archivo para Excel descargado');
@@ -1190,7 +1248,7 @@ async function exportPdf(){
     const arr = breakdown(u.repFrom, u.repTo, sc, kind); if (!arr.length) continue;
     y = table(y, [t, 'Monto', '%'], arr.map(x => [plain(x.c.name), pm(x.v), x.p.toFixed(1) + '%']));
   }
-  table(y, ['Fecha', 'Detalle', 'Categoría', 'Cuenta', 'Monto'], tx.map(t => [t.date, plain(t.desc || cat(t.cat).name), plain(cat(t.cat).name), plain(acc(t.acc).name),
+  table(y, ['Fecha', 'Detalle', 'Categoría', 'Cuenta', 'Monto'], tx.map(t => [t.date + (t.time ? ' ' + t.time : ''), plain(t.desc || cat(t.cat).name), plain(cat(t.cat).name), plain(acc(t.acc).name),
     (t.type === 'income' ? '+' : '-') + pm(t.amount, acc(t.acc).cur)]), {columnStyles:{1:{halign:'left'}, 2:{halign:'left'}, 4:{halign:'right'}}});
   const n = doc.getNumberOfPages();
   for (let i = 1; i <= n; i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120);
@@ -1366,14 +1424,21 @@ const A = {
     S.draft.amount = String(round2(+el.dataset.v)); S.draft.cat = tc.id;
     S.draft.desc = el.dataset.d ? 'Diezmo del mes anterior' : 'Diezmo'; if (el.dataset.d) S.draft.date = el.dataset.d; renderAdd();
   },
-  dType: el => { S.draft.type = el.dataset.v; S.draft.step = 1; S.draft.cat = null; renderAdd(); },
-  dAcc: el => { S.draft[el.dataset.k] = el.dataset.v; if (el.dataset.k === 'acc') S.draft.cat = null; renderAdd(); },
+  dType: el => { const d = S.draft; d.type = el.dataset.v; d.step = 1; d.cat = null;
+    if (d.type === 'transfer'){ const accs = writableAccounts(); d.from = d.acc; d.to = (accs.find(a => a.id !== d.acc) || accs[0]).id; }
+    renderAdd(); },
+  editTx: el => { closeSheet(); startEdit(el.dataset.v); },
+  dAcc: el => { const d = S.draft, k = el.dataset.k, before = acc(d[k]);
+    d[k] = el.dataset.v; if (k === 'acc' && before?.shared !== acc(d.acc)?.shared) d.cat = null; renderAdd(); },
   key: el => {
-    const d = S.draft, k = el.dataset.v; let a = d.amount;
+    const d = S.draft, k = el.dataset.v;
+    if (d.fresh && k !== 'del') d.amount = '0'; // al editar, la primera tecla reemplaza el monto
+    let a = d.amount;
     if (k === 'del') a = a.length > 1 ? a.slice(0, -1) : '0';
     else if (k === '.') { if (!a.includes('.')) a += '.'; }
     else { if (a.includes('.') && a.split('.')[1].length >= 2) return; if (a.replace('.', '').length >= 10) return; a = a === '0' ? k : a + k; }
     d.amount = a; $('#amt').textContent = amountText(d);
+    if (d.fresh){ d.fresh = false; $('#amt').classList.remove('fresh'); $('#amt').nextElementSibling?.remove(); }
     const e = $('#derr'); if (e) e.textContent = '';
   },
   dNext: () => { if (!(Number(S.draft.amount) > 0)) { $('#derr').textContent = 'Escribe un monto mayor que cero.'; return; } S.draft.step = 2; renderAdd(); },
@@ -2408,8 +2473,8 @@ Object.assign(F, {
     const s = S.scheduled.find(x => x.id === f.dataset.id), err = $('#ferr'), amount = round2(parseAmt($('#sp-pa').value)), date = $('#sp-pd').value;
     if (!(amount > 0)) return (err.textContent = 'Escribe un monto mayor que cero.');
     if (!date || date > TODAY) return (err.textContent = 'La fecha no puede ser futura.');
-    const row = await q(sb.from('transactions').insert({account_id:s.acc, category_id:s.cat, type:'expense', amount, occurred_on:date,
-      description:s.name.slice(0, 120), notes:'Pago programado', created_by:me()}).select().single());
+    const row = await q(sb.from('transactions').insert(withTime({account_id:s.acc, category_id:s.cat, type:'expense', amount, occurred_on:date,
+      description:s.name.slice(0, 120), notes:'Pago programado', created_by:me()}, date === TODAY ? nowHM() : null)).select().single());
     S.tx.unshift(mapTx(row)); LS.set('lastTx.' + me(), Date.now()); markRemindersRead();
     const nn = await schAdvance(s);
     closeSheet(); await afterWrite(); render(); toast(nn ? `Pago registrado. El próximo es el ${dShort(nn)}` : 'Pago registrado');
@@ -2460,8 +2525,8 @@ Object.assign(F, {
       const a = acc($('#dp-ac').value), c = $('#dp-c').value;
       if (!a) return (err.textContent = 'Elige la cuenta del pago.');
       if (!c) return (err.textContent = 'Elige una categoría para el gasto.');
-      const row = await q(sb.from('transactions').insert({account_id:a.id, category_id:c, type:'expense', amount, occurred_on:date, description:('Pago ' + d.name).slice(0, 120),
-        notes:extra ? 'Abono extra a capital' : `Capital ${money(principal, d.cur)} · intereses ${money(interest, d.cur)}`, created_by:me()}).select().single());
+      const row = await q(sb.from('transactions').insert(withTime({account_id:a.id, category_id:c, type:'expense', amount, occurred_on:date, description:('Pago ' + d.name).slice(0, 120),
+        notes:extra ? 'Abono extra a capital' : `Capital ${money(principal, d.cur)} · intereses ${money(interest, d.cur)}`, created_by:me()}, date === TODAY ? nowHM() : null)).select().single());
       S.tx.unshift(mapTx(row)); txId = row.id; LS.set('lastTx.' + me(), Date.now());
       if (d.acc !== a.id || d.cat !== c) sb.from('debts').update({account_id:a.id, category_id:c}).eq('id', d.id).then(() => {}, () => {});
     }
@@ -2511,7 +2576,7 @@ document.addEventListener('submit', e => {
 document.addEventListener('input', e => {
   const el = e.target, k = el.dataset.in; if (!k) return;
   if (k === 'txQuery'){ S.ui.txQuery = el.value; const pos = el.selectionStart; render(); const qi = $('#q'); qi.focus(); qi.setSelectionRange(pos, pos); }
-  else if (['date','desc','note','toAmount'].includes(k) && S.draft) S.draft[k] = el.value;
+  else if (['date','time','desc','note','toAmount'].includes(k) && S.draft) S.draft[k] = el.value;
   else if (k === 'color' && isHex(el.value)) setColor(el.value, el.closest('.swatches'));
   else if (k === 'accName'){ if (el.value !== S.form.autoName) S.form.autoName = ''; updAccPreview(); }
   else if (k === 'emoji'){
