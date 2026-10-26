@@ -387,7 +387,7 @@ function planInfo(){
 async function loadAll(){
   await loadProfile();
   await Promise.all([loadSubscription(), loadFamily(), loadAccounts(), loadCategories(), loadBudgets(), loadGoals(), loadTx(), loadNotifs(), loadPlanner()]);
-  await loadFamCharges();
+  await Promise.all([loadFamCharges(), loadBudDraft()]);
   S.loadedAt = Date.now();
 }
 /* Tras un cambio: refresca saldos y avisa las alertas nuevas que creó el servidor */
@@ -437,7 +437,7 @@ function render(){
   v.className = '';
   const views = {home:vHome, tx:vTx, stats:vStats, more:vMore, budgets:vBudgets, goals:vGoals, family:vFamily,
     categories:vCategories, reports:vReports, alerts:vAlerts, settings:vSettings, accounts:vAccounts,
-    reminders:vReminders, scheduled:vScheduled, debts:vDebts, debt:vDebt, savings:vSavings};
+    reminders:vReminders, scheduled:vScheduled, debts:vDebts, debt:vDebt, savings:vSavings, budDraft:vBudDraft};
   v.innerHTML = (views[S.ui.screen] || vHome)();
   if (pendingGo) setTimeout(applyGo, 0);
   const tabs = [['home','Inicio','home'],['tx','Movimientos','list'],null,['stats','Estadísticas','chart'],['more','Más','grid']];
@@ -1117,6 +1117,7 @@ function vBudgets(){
   <div class="panel" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="eyebrow">Total del mes</span><span class="muted" style="font-size:12px">${daysLeft(p.end)} días restantes</span></div>
     <div class="num" style="font-size:24px;font-weight:700;margin:4px 0 8px">${money(spent)} <span class="muted" style="font-size:14px;font-weight:600">de ${money(tot)}</span></div>
     <div class="bar"><i class="brand" style="width:${tot ? Math.min(100, spent / tot * 100) : 0}%"></i></div></div>
+  ${budDraftCard()}
   <div class="list">${list.map(budRow).join('') || '<div class="empty">Crea tu primer presupuesto para recibir alertas antes de pasarte.</div>'}</div>`;
 }
 function budgetSheet(id, scope){
@@ -2666,6 +2667,160 @@ document.addEventListener('change', e => {
   else if (k === 'dpAcc'){ const d = S.debts.find(x => x.id === S.form.debt); $('#dp-c').innerHTML = debtCatOpts(acc(el.value), d); }
   else if (k === 'debtCalc') debtCalcHint();
   else if (k === 'debtExtra'){ S.ui.debtExtra = Math.max(0, parseAmt(el.value) || 0); render(); }
+});
+
+
+/* ---- borrador de presupuesto: se arma con los gastos de los últimos meses y el usuario lo aprueba ---- */
+const roundBud = n => n <= 0 ? 0 : n < 1000 ? Math.ceil(n / 50) * 50 : Math.ceil(n / 100) * 100;
+/* Gastos en lempiras de un ámbito: personal = cuentas personales (sin lo cargado a la familia);
+   familia = cuentas compartidas + gastos personales cargados a la familia (tuyos y de otros miembros) */
+function scopeExpenses(sc){
+  const out = [], seen = new Set();
+  for (const t of S.tx){
+    if (t.type !== 'expense' || t.tg) continue;
+    const a = acc(t.acc); if (!a || a.cur !== 'HNL') continue;
+    const id = sc === 'p' ? (!a.shared && !t.fam ? t.cat : null) : (a.shared ? t.cat : t.fam);
+    if (id){ out.push({cat:id, date:t.date, amount:t.amount}); seen.add(t.id); }
+  }
+  if (sc === 'f') (S.famCharges || []).forEach(x => { if (!seen.has(x.id) && x.cur === 'HNL') out.push({cat:x.fam, date:x.date, amount:x.amount}); });
+  return out;
+}
+function genBudDraft(){
+  const items = [], meta = {created:TODAY, scopes:{}};
+  const scopes = [['p', startDay()], ...(hasFamily() && canEditScope('f') ? [['f', famDay()]] : [])];
+  for (const [sc, sd] of scopes){
+    const rows = scopeExpenses(sc), cur = period(TODAY, sd);
+    const has = p => rows.some(r => r.date >= p.start && r.date <= p.end);
+    // Los últimos 3 meses financieros completos con gastos; si eres nuevo, lo que va del mes
+    let used = [1, 2, 3].map(i => period(addMonths(cur.start, -i), sd)).filter(has), partial = false;
+    if (!used.length){ if (!has(cur)) continue; used = [{start:cur.start, end:TODAY}]; partial = true; }
+    meta.scopes[sc] = {months:used.length, from:used[used.length - 1].start, to:used[0].end, partial};
+    const by = new Map();
+    used.forEach((p, mi) => rows.forEach(r => {
+      if (r.date < p.start || r.date > p.end) return;
+      const c = cat(r.cat); if (c.kind !== 'expense' || !c.id) return;
+      const root = rootOf(c), x = by.get(root.id) || {c:root, per:Array(used.length).fill(0)};
+      x.per[mi] += r.amount; by.set(root.id, x);
+    }));
+    by.forEach(({c, per}) => {
+      const avg = round2(per.reduce((a, b) => a + b, 0) / used.length), max = round2(Math.max(...per));
+      if (avg < 20) return;
+      const existing = S.budgets.find(b => b.cat === c.id);
+      items.push({src:sc, scope:sc, cat:c.id, name:c.name, icon:c.icon, color:c.color, avg, max, amount:roundBud(avg), alert:80,
+        on:avg >= 150 && !existing});
+    });
+  }
+  items.sort((a, b) => b.avg - a.avg);
+  return {items, meta};
+}
+/* Categoría destino de una línea: la misma si no cambió de ámbito; si cambió, la del otro lado con el mismo nombre (o null = se creará) */
+function draftTarget(it){
+  if (it.scope === it.src) return it.cat;
+  return S.categories.find(c => c.scope === it.scope && !c.parent && c.kind === 'expense' && !c.archived && sameName(c.name, it.name))?.id || null;
+}
+async function loadBudDraft(){
+  S.budDraft = null;
+  try {
+    const r = await q(sb.from('budget_drafts').select('items,meta').eq('owner_id', me()).maybeSingle());
+    S.budDraft = r && r.items.length ? {items:r.items, meta:r.meta} : null; S.budDraftLocal = false;
+  } catch { S.budDraft = LS.get('budDraft.' + me()); S.budDraftLocal = true; }
+}
+async function saveBudDraft(){
+  const d = S.budDraft;
+  if (S.budDraftLocal){ if (d) LS.set('budDraft.' + me(), d); else LS.del('budDraft.' + me()); return; }
+  if (d) await q(sb.from('budget_drafts').upsert({owner_id:me(), items:d.items, meta:d.meta}));
+  else await q(sb.from('budget_drafts').delete().eq('owner_id', me()));
+}
+function budDraftCard(){
+  const d = S.budDraft;
+  if (d){
+    const on = d.items.filter(x => x.on);
+    return `<button class="panel" data-a="nav" data-v="budDraft" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin-bottom:14px;border-color:var(--brand)">
+      <span class="tile" style="background:var(--brand-soft);color:var(--brand)">📝</span><span style="flex:1;min-width:0"><b>Tienes un borrador sin aprobar</b>
+      <small class="muted" style="display:block;font-size:12.5px">${on.length} ${on.length === 1 ? 'categoría' : 'categorías'} · ${money(on.reduce((s, x) => s + (+x.amount || 0), 0))} al mes</small></span><span class="link">Revisar</span></button>`;
+  }
+  if (!S.tx.some(t => t.type === 'expense')) return '';
+  return `<div class="panel" style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><span class="tile" style="background:var(--gold-soft);color:var(--gold)">✨</span>
+    <div style="flex:1;min-width:0"><b>Arma tu presupuesto con tus gastos</b><small class="muted" style="display:block;font-size:12.5px">Te proponemos un monto por categoría según tus últimos 3 meses. Tú lo revisas y lo apruebas.</small></div>
+    <button class="btn sm" data-a="budGen">Generar</button></div>`;
+}
+function vBudDraft(){
+  const d = S.budDraft;
+  if (!d){ S.ui.screen = 'budgets'; return vBudgets(); }
+  const both = hasFamily() && canEditScope('p') && canEditScope('f');
+  const on = d.items.filter(x => x.on), total = on.reduce((s, x) => s + (+x.amount || 0), 0);
+  const rng = sc => { const m = d.meta.scopes?.[sc]; return m ? (m.partial ? `lo que va del mes (desde el ${dShort(m.from)})` : `${m.months === 1 ? 'el último mes' : `los últimos ${m.months} meses`} (${dShort(m.from)} – ${dShort(m.to)})`) : ''; };
+  const row = (it, i) => {
+    const tgt = draftTarget(it), ex = tgt && S.budgets.find(b => b.cat === tgt);
+    const note = !tgt ? `Se creará la categoría «${esc(it.name)}» en ${it.scope === 'f' ? 'Familia' : 'Personal'}.`
+      : ex ? `Reemplaza tu presupuesto actual de ${money(ex.amount)}.` : '';
+    return `<div class="bud" style="${it.on ? '' : 'opacity:.6'}">
+      <div class="h"><span class="tile" style="background:${soft(it.color)}">${esc(it.icon)}</span>
+        <span class="t"><b>${esc(it.name)}</b><small style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Gastas ${money(it.avg)} al mes · máx. ${money(it.max)}</small></span>
+        <label class="sw" style="flex:none"><input type="checkbox" data-in="bdOn" data-i="${i}" ${it.on ? 'checked' : ''} aria-label="Incluir ${esc(it.name)}"><span></span></label></div>
+      ${it.on ? `<div style="display:grid;grid-template-columns:${both ? '1fr 1.15fr' : '1fr'};gap:8px;align-items:center">
+        <div class="pw"><input class="inp" style="padding:9px 12px 9px 30px;font-weight:700" inputmode="decimal" value="${it.amount}" data-in="bdAmt" data-i="${i}" aria-label="Presupuesto mensual para ${esc(it.name)}"><span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:700">L</span></div>
+        ${both ? `<div class="seg" style="padding:3px">${[['p','Personal'],['f','Familia']].map(([k, l]) =>
+          `<button type="button" class="${it.scope === k ? 'on' : ''}" style="padding:7px 4px;font-size:12.5px" data-a="bdScope" data-i="${i}" data-v="${k}">${l}</button>`).join('')}</div>` : ''}</div>
+      ${note ? `<small class="muted" style="font-size:12px">${note}</small>` : ''}` : ''}</div>`;
+  };
+  const rngs = [...new Set(['p', 'f'].filter(sc => d.meta.scopes?.[sc]).map(rng))], scopesTxt = rngs.join(' y ');
+  return `${subhead('Borrador de presupuesto')}
+  <div class="panel"><div class="eyebrow">Total propuesto al mes</div><div class="num" style="font-size:26px;font-weight:700;margin:2px 0 4px">${money(total)}</div>
+    <small class="muted">${on.length} de ${d.items.length} categorías · según tus gastos de ${scopesTxt}. Nada se guarda como presupuesto hasta que lo apruebes.</small></div>
+  <div class="chips" style="margin:12px -18px 4px"><span class="muted" style="font-size:12.5px;font-weight:700;align-self:center;flex:none">Ajustar todo:</span>
+    ${[[0.9, '−10% (ahorrar)'], [1, 'Igual que hoy'], [1.1, '+10% (margen)']].map(([f, l]) => `<button class="chip" data-a="bdAll" data-v="${f}">${l}</button>`).join('')}</div>
+  <div class="list" style="margin-top:10px">${d.items.map(row).join('')}</div>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">
+    <button class="btn" data-a="bdApprove" ${on.length ? '' : 'disabled'}>${ic('check','sm')} Aprobar y crear ${on.length} ${on.length === 1 ? 'presupuesto' : 'presupuestos'}</button>
+    <button class="btn ghost" data-a="budGen" data-v="again">Volver a calcular con mis gastos</button>
+    <button class="textbtn" style="color:var(--neg)" data-a="bdDiscard">Descartar borrador</button></div>
+  <div class="note" style="margin-top:12px">Los montos se redondean hacia arriba. Cada presupuesto se reinicia en tu mes financiero y te avisa al llegar al 80%.</div>`;
+}
+const bdItem = el => S.budDraft.items[+el.dataset.i];
+Object.assign(A, {
+  budGen: async el => {
+    const run = async () => {
+      const d = genBudDraft();
+      if (!d.items.length) return toast('Aún no hay gastos suficientes para proponer un presupuesto. Registra tus gastos unos días y vuelve.', 'warn');
+      S.budDraft = d; await saveBudDraft(); go('budDraft', 'budgets'); toast('Borrador listo: revísalo y apruébalo');
+    };
+    if (el.dataset.v === 'again') return toast('¿Volver a calcular? Se perderán tus cambios en el borrador.', 'warn', {label:'Recalcular', run});
+    await run();
+  },
+  bdScope: async el => { bdItem(el).scope = el.dataset.v; await saveBudDraft(); render(); },
+  bdAll: async el => { S.budDraft.items.forEach(x => { if (x.on) x.amount = roundBud(x.avg * +el.dataset.v); }); await saveBudDraft(); render(); },
+  bdDiscard: () => toast('¿Descartar el borrador? No se crea ningún presupuesto.', 'warn', {label:'Descartar', run: async () => {
+    S.budDraft = null; await saveBudDraft(); go('budgets', 'more'); toast('Borrador descartado'); }}),
+  bdApprove: async () => {
+    const items = S.budDraft.items.filter(x => x.on);
+    const bad = items.find(x => !(+x.amount > 0)); if (bad) return toast(`Escribe un monto para ${bad.name}.`, 'warn');
+    if (items.some(x => !canEditScope(x.scope))) return toast('Tu rol no permite crear presupuestos de la familia.', 'warn');
+    const sums = new Map();
+    for (const it of items){
+      let tgt = draftTarget(it);
+      if (!tgt){
+        const scope = it.scope === 'p' ? {owner_id:me(), family_id:null} : {owner_id:null, family_id:S.family.id};
+        const row = await q(sb.from('categories').insert({...scope, name:it.name, kind:'expense', icon:it.icon, color:it.color, sort_order:100}).select().single());
+        S.categories.push(mapCat(row)); tgt = row.id;
+      }
+      sums.set(tgt, round2((sums.get(tgt) || 0) + +it.amount));
+    }
+    let made = 0, upd = 0;
+    for (const [catId, amount] of sums){
+      const ex = S.budgets.find(b => b.cat === catId);
+      if (ex){ await q(sb.from('budgets').update({amount}).eq('id', ex.id)); upd++; }
+      else { await q(sb.from('budgets').insert({category_id:catId, amount, alert_percent:80, currency:'HNL'})); made++; }
+    }
+    S.budDraft = null; await saveBudDraft(); await Promise.all([loadCategories(), loadBudgets()]);
+    go('budgets', 'more');
+    toast([made && `${made} ${made === 1 ? 'presupuesto creado' : 'presupuestos creados'}`, upd && `${upd} ${upd === 1 ? 'actualizado' : 'actualizados'}`].filter(Boolean).join(' y '));
+  }
+});
+document.addEventListener('change', e => {
+  const el = e.target, k = el.dataset.in; if (!k || !S.budDraft) return;
+  if (k === 'bdOn') guarded(el, async () => { bdItem(el).on = el.checked; await saveBudDraft(); render(); });
+  else if (k === 'bdAmt') guarded(el, async () => { const v = round2(parseAmt(el.value)); bdItem(el).amount = v > 0 ? v : 0; await saveBudDraft(); render(); });
 });
 
 /* ============ eventos ============ */
