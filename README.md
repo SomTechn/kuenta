@@ -62,6 +62,10 @@ No hay claves que copiar: la primera vez que corre, la función genera sus clave
 
 Cada persona activa las notificaciones en **Más → Recordatorios**. En iPhone primero hay que instalar Kuenta en la pantalla de inicio (iOS 16.4 o superior). Si la función no está publicada, los avisos igual aparecen en Alertas y los recordatorios llegan mientras Kuenta esté abierta.
 
+## Editar movimientos y hora (actualización 07)
+- Cualquier movimiento se puede **editar** desde su detalle: monto, cuenta, categoría, fecha, hora, descripción y nota. Las transferencias también (se reemplazan por una nueva con los datos corregidos).
+- Cada movimiento guarda **fecha y hora**. Ejecuta `supabase/migrations/07_hora_movimientos.sql` en **SQL Editor** (una columna nueva, no toca datos). Mientras no la ejecutes, la app funciona igual y muestra la hora en que se registró cada movimiento.
+
 ## Seguridad incluida
 - Reglas **RLS** en todas las tablas; las operaciones sensibles (transferencias, familia, invitaciones) son funciones del servidor.
 - Solo el dueño de la familia puede crear cuentas compartidas (lo valida la base de datos).
