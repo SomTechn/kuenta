@@ -226,12 +226,18 @@ function breakdown(start, end, scope, kind){
 }
 function budgetInfo(b, ref = TODAY){
   const c = cat(b.cat), p = period(ref, dayFor(c.scope));
-  let spent = 0;
+  const inTree = id => { if (!id) return false; const x = cat(id); return x.id === c.id || x.parent === c.id; };
+  let spent = 0; const seen = new Set();
   for (const t of S.tx){
     if (t.type !== 'expense' || t.date < p.start || t.date > p.end) continue;
-    const tc = cat(t.cat); if (tc.id !== c.id && tc.parent !== c.id) continue;
-    if (acc(t.acc)?.cur !== b.cur) continue;
-    spent += t.amount;
+    // Un gasto cargado a la familia cuenta en el presupuesto familiar, no en el personal de su categoría
+    const hit = c.scope === 'f' ? inTree(t.cat) || inTree(t.fam) : inTree(t.cat) && !t.fam;
+    if (!hit || acc(t.acc)?.cur !== b.cur) continue;
+    spent += t.amount; seen.add(t.id);
+  }
+  if (c.scope === 'f') for (const x of S.famCharges || []){
+    if (seen.has(x.id) || x.cur !== b.cur || x.date < p.start || x.date > p.end || !inTree(x.fam)) continue;
+    spent += x.amount;
   }
   const pct = spent / b.amount * 100;
   return {c, spent, pct, state: pct >= 100 ? 'over' : pct >= b.alert ? 'warn' : 'ok', left: b.amount - spent, p};
@@ -273,7 +279,7 @@ function txTime(r){
   const c = new Date(r.created_at);
   return localISO(c) === r.occurred_on ? `${pad(c.getHours())}:${pad(c.getMinutes())}` : '';
 }
-const mapTx = r => ({id:r.id, acc:r.account_id, cat:r.category_id, type:r.type, amount:+r.amount, date:r.occurred_on, time:txTime(r), desc:r.description || '', note:r.notes || '', by:r.created_by, tg:r.transfer_group});
+const mapTx = r => ({id:r.id, acc:r.account_id, cat:r.category_id, type:r.type, amount:+r.amount, date:r.occurred_on, time:txTime(r), desc:r.description || '', note:r.notes || '', by:r.created_by, tg:r.transfer_group, fam:r.family_category_id || null});
 const txKey = t => t.date + ' ' + (t.time || '00:00');
 const byNewest = (a, b) => txKey(b).localeCompare(txKey(a));
 /* Agrega la hora a una fila nueva o editada, solo si la base ya tiene la columna */
@@ -321,20 +327,37 @@ async function loadGoals(){
 async function loadTx(){
   S.txFrom = addMonths(period().start, -HISTORY_MONTHS);
   const cols = 'id,account_id,category_id,type,amount,occurred_on,description,notes,created_by,transfer_group,created_at';
-  const txQuery = withHour => fetchAll(() => sb.from('transactions').select(cols + (withHour ? ',occurred_time' : ''))
-    .gte('occurred_on', S.txFrom).order('occurred_on', {ascending:false}).order('created_at', {ascending:false}));
-  // Si la base aún no tiene la columna de hora (migración 07), la app sigue funcionando sin ella
-  const txRows = S.hasTime === false ? txQuery(false) : txQuery(true).then(r => { S.hasTime = true; return r; }, e => {
-    if (!/occurred_time/.test(String(e?.message || ''))) throw e;
-    S.hasTime = false; return txQuery(false);
-  });
+  // Columnas que pueden faltar si la base no tiene la migración 07 (hora) u 08 (cargo familiar): la app sigue funcionando sin ellas
+  const txRows = async () => {
+    for (let i = 0; i < 3; i++){
+      const opt = OPT_COLS.filter(([, f]) => S[f] !== false);
+      try {
+        const r = await fetchAll(() => sb.from('transactions').select([cols, ...opt.map(([c]) => c)].join(','))
+          .gte('occurred_on', S.txFrom).order('occurred_on', {ascending:false}).order('created_at', {ascending:false}));
+        opt.forEach(([, f]) => { S[f] = true; });
+        return r;
+      } catch (e) {
+        const miss = opt.find(([c]) => String(e?.message || '').includes(c));
+        if (!miss) throw e;
+        S[miss[1]] = false;
+      }
+    }
+  };
   const [rows, atts] = await Promise.all([
-    txRows,
+    txRows(),
     fetchAll(() => sb.from('attachments').select('id,transaction_id,storage_path,mime_type,uploaded_by'))
   ]);
   S.tx = rows.map(mapTx);
   S.atts = {};
   atts.forEach(a => (S.atts[a.transaction_id] ||= []).push(a));
+}
+const OPT_COLS = [['occurred_time', 'hasTime'], ['family_category_id', 'hasFam']];
+/* Gastos de otros miembros, desde sus cuentas personales, cargados al presupuesto de la familia (solo para sumar) */
+async function loadFamCharges(){
+  S.famCharges = [];
+  if (!S.family || !S.hasFam) return;
+  try { S.famCharges = (await q(sb.rpc('family_charges', {p_from:S.txFrom}))).map(r => ({id:r.id, fam:r.family_category_id, amount:+r.amount, cur:r.currency, date:r.occurred_on})); }
+  catch {}
 }
 async function loadNotifs(){
   S.notifs = await q(sb.from('notifications').select('id,type,title,body,data,read_at,created_at').order('created_at', {ascending:false}).limit(100));
@@ -364,6 +387,7 @@ function planInfo(){
 async function loadAll(){
   await loadProfile();
   await Promise.all([loadSubscription(), loadFamily(), loadAccounts(), loadCategories(), loadBudgets(), loadGoals(), loadTx(), loadNotifs(), loadPlanner()]);
+  await loadFamCharges();
   S.loadedAt = Date.now();
 }
 /* Tras un cambio: refresca saldos y avisa las alertas nuevas que creó el servidor */
@@ -572,7 +596,7 @@ function txRow(t, inDay = false){
     sub = 'Transferencia · ' + a.name; sign = t.type === 'transfer_out' ? -1 : 1;
   } else {
     const c = cat(t.cat); icon = c.icon; color = c.color; title = t.desc || c.name;
-    sub = c.name + ' · ' + a.name; sign = t.type === 'income' ? 1 : -1;
+    sub = c.name + ' · ' + a.name + (t.fam ? ' · Familia' : ''); sign = t.type === 'income' ? 1 : -1;
     cls = t.type === 'income' ? 'pos' : c.kind === 'generosity' ? 'gen' : '';
   }
   const by = a.shared && t.by !== me() ? `<span class="avatar sm" title="${esc(uname(t.by))}">${esc(uname(t.by)[0])}</span>` : '';
@@ -727,6 +751,7 @@ async function txDetail(id){
       <div class="num" style="font-size:32px;font-weight:700">${money(t.amount, a.cur)}</div><div class="muted">${esc(t.desc || (c && c.name) || '')}</div></div>
     <div class="panel"><table class="rep">
       ${c ? `<tr><td class="muted">Categoría</td><td class="r">${esc(c.icon)} ${esc(c.parent ? cat(c.parent).name + ' › ' : '')}${esc(c.name)}</td></tr>` : ''}
+      ${t.fam ? `<tr><td class="muted">Presupuesto</td><td class="r">Familia · ${esc(cat(t.fam).icon)} ${esc(cat(t.fam).name)}</td></tr>` : ''}
       <tr><td class="muted">${t.tg ? 'Desde' : 'Cuenta'}</td><td class="r">${esc(t.tg ? (fromA?.name || '—') : a.name)}</td></tr>
       ${t.tg ? `<tr><td class="muted">Hacia</td><td class="r">${esc(toA?.name || '—')}</td></tr>` : ''}
       <tr><td class="muted">Fecha${t.time ? ' y hora' : ''}</td><td class="r">${dLong(t.date)}${t.time ? ' · ' + fmtTime(t.time) : ''}</td></tr>
@@ -804,7 +829,8 @@ function startEdit(id){
     if (!out || !inn) return toast('No se encontró la otra parte de la transferencia.', 'over');
     S.draft = {...base, type:'transfer', amount:String(out.amount), from:out.acc, to:inn.acc, toAmount:acc(out.acc)?.cur !== acc(inn.acc)?.cur ? String(inn.amount) : '',
       desc:out.desc, editTg:t.tg, acc:out.acc, cat:null, step:1};
-  } else S.draft = {...base, type:t.type, acc:t.acc, cat:t.cat, step:1, editId:t.id};
+  } else S.draft = {...base, type:t.type, acc:t.acc, cat:t.cat, step:1, editId:t.id, origAcc:t.acc, mine:t.by === me(),
+    bud:t.fam ? 'f' : 'p', fam:t.fam};
   renderAdd();
 }
 function amountText(d){
@@ -818,12 +844,15 @@ function renderAdd(){
   const fromAccs = isOwner() ? accs : accs.filter(a => !a.shared);
   const editing = !!(d.editId || d.editTg), title = editing ? 'Editar movimiento' : 'Nuevo movimiento';
   // Al editar no se puede convertir un gasto en transferencia ni al revés
-  const types = d.editTg ? [] : d.editId ? [['expense','Gasto'],['income','Ingreso']] : [['expense','Gasto'],['income','Ingreso'],['transfer','Transferir']];
+  const types = d.editTg || d.editId ? [] : [['expense','Gasto'],['income','Ingreso'],['transfer','Transferir']];
   const seg = types.length ? `<div class="seg" style="margin-bottom:12px">${types.map(([k, l]) =>
     `<button class="${d.type === k ? 'on' : ''}" data-a="dType" data-v="${k}">${l}</button>`).join('')}</div>` : '';
   const when = `<div class="row2"><div class="field"><label for="dDate">Fecha</label><input class="inp" id="dDate" type="date" value="${d.date}" max="${TODAY}" data-in="date"></div>
       ${S.hasTime ? `<div class="field"><label for="dTime">Hora</label><input class="inp" id="dTime" type="time" value="${esc(d.time || '')}" data-in="time"></div>` : ''}</div>`;
-  const accChips = (key, label) => `<div class="eyebrow" style="margin:12px 0 6px">${label}</div><div class="accsel">${(key === 'from' ? fromAccs : accs).map(a =>
+  // Al editar: misma moneda y mismo tipo de cuenta (personal o compartida); solo quien lo registró lo cambia de cuenta
+  const o = d.editId && acc(d.origAcc);
+  const sameKind = a => !o || (a.id === o.id || (d.mine && a.cur === o.cur && a.shared === o.shared && (a.shared || a.owner === o.owner)));
+  const accChips = (key, label) => `<div class="eyebrow" style="margin:12px 0 6px">${label}</div><div class="accsel">${(key === 'from' ? fromAccs : accs.filter(sameKind)).map(a =>
     `<button class="${d[key] === a.id ? 'on' : ''}" data-a="dAcc" data-k="${key}" data-v="${a.id}"><span style="font-size:18px">${esc(a.icon)}</span><span>${esc(a.name)}<small class="num">${money(balance(a), a.cur)}</small></span></button>`).join('')}</div>`;
   const keypad = `<div class="keys">${['1','2','3','4','5','6','7','8','9','.','0','del'].map(k =>
     `<button data-a="key" data-v="${k}" ${k === 'del' ? 'aria-label="Borrar"' : ''}>${k === 'del' ? '⌫' : k}</button>`).join('')}</div>`;
@@ -850,17 +879,22 @@ function renderAdd(){
       <button class="btn" style="margin-top:6px" data-a="dNext">${editing ? 'Siguiente' : 'Elegir categoría'} ${ic('right','sm')}</button>`);
     return;
   }
-  const a = acc(d.acc), sc = a.shared ? 'f' : 'p';
+  const a = acc(d.acc), charge = d.type === 'expense' && !a.shared && canChargeFamily();
+  if (!charge) d.bud = 'p';
+  const toFam = d.bud === 'f', sc = a.shared || toFam ? 'f' : 'p', picked = toFam ? d.fam : d.cat;
   const kinds = d.type === 'income' ? ['income'] : ['expense','generosity'];
   const since = addDays(TODAY, -60), usage = {};
-  S.tx.forEach(t => { if (t.cat && t.date >= since) usage[t.cat] = (usage[t.cat] || 0) + 1; });
+  S.tx.forEach(t => { if (t.cat && t.date >= since) usage[t.cat] = (usage[t.cat] || 0) + 1; if (t.fam && t.date >= since) usage[t.fam] = (usage[t.fam] || 0) + 1; });
   const cats = S.categories.filter(c => c.scope === sc && kinds.includes(c.kind) && !c.archived)
     .sort((x, y) => (usage[y.id] || 0) - (usage[x.id] || 0) || (x.kind === y.kind ? x.sort - y.sort : x.kind === 'generosity' ? 1 : -1));
   openSheet(`<div class="sheet-h"><button class="iconbtn" data-a="dBack" aria-label="Atrás">${ic('back','sm')}</button>
       <div style="text-align:center;min-width:0"><div class="num" style="font-size:22px;font-weight:700">${money(Number(d.amount), a.cur)}</div><small class="muted">${esc(a.icon)} ${esc(a.name)}</small></div>
       <button class="iconbtn" data-a="closeSheet" aria-label="Cerrar">${ic('close','sm')}</button></div>
+    ${charge ? `<div class="field" style="margin-bottom:14px"><label>Cuenta en el presupuesto</label><div class="seg">${[['p','Personal'],['f','Familia']].map(([k, l]) =>
+      `<button type="button" class="${(d.bud || 'p') === k ? 'on' : ''}" data-a="dBud" data-v="${k}">${l}</button>`).join('')}</div>
+      ${toFam ? `<small class="muted" style="font-size:12px;margin-top:6px;display:block">El dinero sale de ${esc(a.name)}, pero el gasto cuenta en el presupuesto de la familia.</small>` : ''}</div>` : ''}
     <div class="eyebrow" style="margin-bottom:8px">Categoría${sc === 'f' ? ' de la familia' : ''} · más usadas primero</div>
-    ${cats.length ? `<div class="catgrid">${cats.map(c => `<button class="${d.cat === c.id ? 'on' : ''}" data-a="dCat" data-v="${c.id}"><span class="e">${esc(c.icon)}</span>${esc(c.name)}</button>`).join('')}</div>`
+    ${cats.length ? `<div class="catgrid">${cats.map(c => `<button class="${picked === c.id ? 'on' : ''}" data-a="dCat" data-v="${c.id}"><span class="e">${esc(c.icon)}</span>${esc(c.name)}</button>`).join('')}</div>`
       : '<div class="empty">No hay categorías para esta cuenta. Créalas en Más → Categorías.</div>'}
     <div class="form" style="margin-top:16px">
       ${when}
@@ -869,7 +903,7 @@ function renderAdd(){
       ${editing ? '' : d.file ? `<div class="receipt">${d.preview ? `<img src="${d.preview}" alt="Comprobante adjunto">` : `<div class="note">${ic('file','sm')} ${esc(d.file.name)}</div>`}</div><button type="button" class="textbtn" data-a="dRmFile">Quitar comprobante</button>`
         : `<label class="upload">${ic('camera')} Adjuntar comprobante (opcional)<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" data-up="draft"></label>`}
       <div class="err" id="derr"></div>
-      <button class="btn" data-a="saveTx" ${d.cat ? '' : 'disabled'}>${ic('check','sm')} ${editing ? 'Guardar cambios' : 'Guardar ' + (d.type === 'income' ? 'ingreso' : 'gasto')}</button>
+      <button class="btn" data-a="saveTx" ${picked ? '' : 'disabled'}>${ic('check','sm')} ${editing ? 'Guardar cambios' : 'Guardar ' + (d.type === 'income' ? 'ingreso' : 'gasto')}</button>
     </div>`);
 }
 /* La fecha y la hora no pueden estar en el futuro (5 minutos de margen) */
@@ -879,12 +913,36 @@ function whenError(d){
   if (S.hasTime && d.time && d.date === TODAY && d.time > (() => { const x = new Date(Date.now() + 5 * 60000); return localISO(x) > TODAY ? '23:59' : `${pad(x.getHours())}:${pad(x.getMinutes())}`; })()) return 'La hora no puede ser futura.';
   return '';
 }
+const canChargeFamily = () => !!S.hasFam && hasFamily() && canEditScope('f');
+/* Categoría personal equivalente a una de la familia (mismo nombre y tipo); si no existe, la crea copiándola */
+async function personalCatFor(famId){
+  const f = cat(famId), fp = f.parent ? cat(f.parent) : null;
+  const find = (x, parent) => S.categories.find(c => c.scope === 'p' && c.kind === x.kind && !c.archived && sameName(c.name, x.name)
+    && (parent === undefined || (parent ? c.parent === parent : !c.parent)));
+  let parentId = null;
+  if (fp){
+    const pm = find(fp, null);
+    parentId = pm ? pm.id : (await q(sb.from('categories').insert({owner_id:me(), family_id:null, name:fp.name, kind:fp.kind, icon:fp.icon, color:fp.color, sort_order:100}).select().single())).id;
+  }
+  const m = find(f, fp ? parentId : undefined) || (!fp && find(f));
+  if (m) return m.id;
+  const row = await q(sb.from('categories').insert({owner_id:me(), family_id:null, name:f.name, kind:f.kind, icon:f.icon, color:f.color, parent_id:parentId, sort_order:100}).select().single());
+  S.categories.push(mapCat(row)); if (parentId && !S.categories.some(c => c.id === parentId)) await loadCategories();
+  return row.id;
+}
 async function saveTx(){
-  const d = S.draft, amount = round2(Number(d.amount)), c = cat(d.cat), a = acc(d.acc);
+  const d = S.draft, amount = round2(Number(d.amount)), a = acc(d.acc), toFam = d.bud === 'f' && d.type === 'expense' && !a.shared;
   if (!(amount > 0)) return ($('#derr').textContent = 'Escribe un monto mayor que cero.');
   const we = whenError(d); if (we) return ($('#derr').textContent = we);
-  const fields = withTime({account_id:d.acc, category_id:d.cat, type:d.type, amount, occurred_on:d.date,
+  if (toFam){
+    if (!d.fam) return ($('#derr').textContent = 'Elige una categoría de la familia.');
+    const keep = d.cat && cat(d.cat).scope === 'p' && sameName(cat(d.cat).name, cat(d.fam).name);
+    if (!keep) d.cat = await personalCatFor(d.fam);
+  }
+  const c = cat(d.cat);
+  let fields = withTime({account_id:d.acc, category_id:d.cat, type:d.type, amount, occurred_on:d.date,
     description:d.desc.trim().slice(0, 120) || null, notes:d.note.trim().slice(0, 500) || null}, d.time && d.time.slice(0, 5));
+  if (S.hasFam) fields = {...fields, family_category_id:toFam ? d.fam : null};
   if (d.editId){
     const row = await q(sb.from('transactions').update(fields).eq('id', d.editId).select().single());
     const i = S.tx.findIndex(x => x.id === d.editId); if (i >= 0) S.tx[i] = mapTx(row);
@@ -897,7 +955,7 @@ async function saveTx(){
   LS.set('lastAcc.' + me(), d.acc); LS.set('lastTx.' + me(), Date.now()); markRemindersRead();
   const file = d.file; closeSheet(); S.draft = null; render();
   if (file){ try { await uploadAttachment(t.id, file); render(); } catch (e) { toast('El movimiento se guardó, pero el comprobante no: ' + errMsg(e), 'over'); } }
-  if (t.type === 'expense') toast(`${c.kind === 'generosity' ? 'Generosidad' : 'Gasto'} guardado`);
+  if (t.type === 'expense') toast(`${c.kind === 'generosity' ? 'Generosidad' : 'Gasto'} guardado${t.fam ? ' en el presupuesto de la familia' : ''}`);
   else {
     const pct = +S.profile.tithe_percent;
     const tithe = S.categories.find(x => x.scope === 'p' && x.kind === 'generosity' && /^diezmo$/i.test(x.name) && !x.archived);
@@ -1472,7 +1530,8 @@ const A = {
   },
   dNext: () => { if (!(Number(S.draft.amount) > 0)) { $('#derr').textContent = 'Escribe un monto mayor que cero.'; return; } S.draft.step = 2; renderAdd(); },
   dBack: () => { S.draft.step = 1; renderAdd(); },
-  dCat: el => { S.draft.cat = el.dataset.v; renderAdd(); },
+  dCat: el => { if (S.draft.bud === 'f') S.draft.fam = el.dataset.v; else S.draft.cat = el.dataset.v; renderAdd(); },
+  dBud: el => { S.draft.bud = el.dataset.v; renderAdd(); },
   dRmFile: () => { if (S.draft.preview) URL.revokeObjectURL(S.draft.preview); S.draft.file = null; S.draft.preview = null; renderAdd(); },
   saveTx, saveTransfer,
   txDetail: el => txDetail(el.dataset.v),
