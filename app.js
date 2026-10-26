@@ -1061,21 +1061,50 @@ function vBudgets(){
     <div class="bar"><i class="brand" style="width:${tot ? Math.min(100, spent / tot * 100) : 0}%"></i></div></div>
   <div class="list">${list.map(budRow).join('') || '<div class="empty">Crea tu primer presupuesto para recibir alertas antes de pasarte.</div>'}</div>`;
 }
-function budgetSheet(id){
+function budgetSheet(id, scope){
   const b = id ? S.budgets.find(x => x.id === id) : null;
-  const sc = b ? cat(b.cat).scope : (hasFamily() && S.ui.budScope === 'family' ? 'f' : 'p');
+  const sc = b ? cat(b.cat).scope : scope || (hasFamily() && S.ui.budScope === 'family' ? 'f' : 'p');
   const editable = canEditScope(sc);
+  // Personal | Familia: en uno nuevo elige de quién es; en uno existente, lo traspasa al otro lado
+  const both = hasFamily() && canEditScope('p') && canEditScope('f');
+  const scSeg = both ? `<div class="field"><label>De quién es</label><div class="seg">${[['p','Personal'],['f','Familia']].map(([k, l]) =>
+    `<button type="button" class="${sc === k ? 'on' : ''}" ${sc === k ? '' : b ? `data-a="budMove" data-v="${b.id}"` : `data-a="budScopeNew" data-v="${k}"`}>${l}</button>`).join('')}</div></div>` : '';
   const used = new Set(S.budgets.map(x => x.cat));
   const opts = S.categories.filter(c => c.scope === sc && c.kind !== 'income' && !c.archived && (!used.has(c.id) || (b && b.cat === c.id)));
   openSheet(`${sheetHead(b ? 'Editar presupuesto' : 'Nuevo presupuesto')}
-    <form class="form" data-f="budget" data-id="${id || ''}" novalidate>
+    <form class="form" data-f="budget" data-id="${id || ''}" novalidate>${scSeg}
       <div class="field"><label for="bu-c">Categoría</label><select class="inp" id="bu-c" ${b || !editable ? 'disabled' : ''}>${opts.map(c => `<option value="${c.id}" ${b && b.cat === c.id ? 'selected' : ''}>${esc(c.icon)} ${esc(c.parent ? cat(c.parent).name + ' › ' : '')}${esc(c.name)}</option>`).join('')}</select></div>
       <div class="row2"><div class="field"><label for="bu-a">Monto mensual (L)</label><input class="inp" id="bu-a" inputmode="decimal" required value="${b ? b.amount : ''}" placeholder="2000" ${editable ? '' : 'disabled'}></div>
       <div class="field"><label for="bu-p">Avisarme al</label><select class="inp" id="bu-p" ${editable ? '' : 'disabled'}>${[50,70,80,90].map(v => `<option value="${v}" ${(b ? b.alert : 80) === v ? 'selected' : ''}>${v}%</option>`).join('')}</select></div></div>
-      <div class="note">Se reinicia cada mes financiero (día ${startDay()}). Las subcategorías suman en su categoría.</div>
+      <div class="note">Se reinicia cada mes financiero (día ${dayFor(sc)}). Las subcategorías suman en su categoría.${sc === 'f' ? ' Cuenta los gastos de las cuentas compartidas.' : ' Cuenta los gastos de tus cuentas personales.'}</div>
+      ${!b && !opts.length ? `<div class="note">Todas las categorías ${sc === 'f' ? 'de la familia' : 'personales'} ya tienen presupuesto.</div>` : ''}
       <div class="err" id="ferr"></div>
       ${editable ? `<button class="btn" type="submit">Guardar</button>${b ? `<button type="button" class="btn danger" data-a="delBudget" data-v="${b.id}">Eliminar presupuesto</button>` : ''}` : '<div class="note">Tu rol es de solo lectura.</div>'}
     </form>`);
+}
+/* Traspasar un presupuesto a Personal o a Familia: usa la categoría con el mismo nombre en el otro lado,
+   o la crea copiando nombre, ícono y color. El monto y el aviso se conservan. */
+const sameName = (a, b) => a.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() === b.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+function budMoveSheet(id){
+  const b = S.budgets.find(x => x.id === id), c = cat(b.cat), to = c.scope === 'p' ? 'f' : 'p', toName = to === 'f' ? 'Familia' : 'Personal';
+  const used = new Set(S.budgets.map(x => x.cat));
+  const cands = S.categories.filter(x => x.scope === to && x.kind === c.kind && !x.archived);
+  const match = cands.find(x => sameName(x.name, c.name) && (!c.parent || (x.parent && sameName(cat(x.parent).name, cat(c.parent).name)))) || cands.find(x => sameName(x.name, c.name));
+  const taken = match && used.has(match.id);
+  const free = cands.filter(x => !used.has(x.id));
+  const label = x => `${esc(x.icon)} ${esc(x.parent ? cat(x.parent).name + ' › ' : '')}${esc(x.name)}`;
+  openSheet(`${sheetHead('Pasar a ' + toName)}
+    <div class="bud" style="pointer-events:none;margin-bottom:12px"><div class="h"><span class="tile" style="background:${soft(c.color)}">${esc(c.icon)}</span>
+      <span class="t"><b>${esc(c.name)}</b><small class="num">${money(b.amount, b.cur)} al mes · aviso al ${b.alert}%</small></span><span class="pill brand">${c.scope === 'f' ? 'Familia' : 'Personal'} → ${toName}</span></div></div>
+    <form class="form" data-f="budMove" data-id="${id}" novalidate>
+      <div class="field"><label for="bm-c">Categoría ${to === 'f' ? 'de la familia' : 'personal'}</label><select class="inp" id="bm-c">
+        ${match && !taken ? '' : `<option value="new">➕ Crear «${esc(c.name)}» en ${toName}</option>`}
+        ${free.map(x => `<option value="${x.id}" ${match && x.id === match.id ? 'selected' : ''}>${label(x)}</option>`).join('')}</select></div>
+      ${taken ? `<div class="note">${toName} ya tiene un presupuesto en «${esc(match.name)}». Elige otra categoría o crea una nueva.</div>` : ''}
+      <div class="note">${to === 'f' ? 'Desde ahora contará los gastos de las cuentas compartidas y lo verán los miembros de la familia.' : 'Desde ahora contará solo los gastos de tus cuentas personales y solo tú lo verás.'} Tus movimientos no cambian.</div>
+      <div class="err" id="ferr"></div>
+      <button class="btn" type="submit">${ic('swap','sm')} Pasar a ${toName}</button>
+      <button type="button" class="btn ghost" data-a="editBudget" data-v="${id}">Cancelar</button></form>`);
 }
 
 /* ---- metas ---- */
@@ -1467,6 +1496,8 @@ const A = {
   statsOff: el => { S.ui.statsOff = Math.max(-HISTORY_MONTHS + 1, Math.min(0, S.ui.statsOff + Number(el.dataset.v))); render(); },
   editBudget: el => budgetSheet(el.dataset.v),
   newBudget: () => budgetSheet(null),
+  budScopeNew: el => budgetSheet(null, el.dataset.v),
+  budMove: el => budMoveSheet(el.dataset.v),
   delBudget: async el => { await q(sb.from('budgets').delete().eq('id', el.dataset.v)); S.budgets = S.budgets.filter(b => b.id !== el.dataset.v); closeSheet(); render(); toast('Presupuesto eliminado'); },
   newGoal: () => goalSheet(),
   contrib: el => contribSheet(el.dataset.v),
@@ -1605,6 +1636,28 @@ const F = {
       toast(shared ? 'Cuenta compartida creada' : 'Cuenta creada');
     }
     closeSheet(); await loadAccounts(); render();
+  },
+  budMove: async f => {
+    const b = S.budgets.find(x => x.id === f.dataset.id), c = cat(b.cat), to = c.scope === 'p' ? 'f' : 'p';
+    let target = $('#bm-c').value;
+    if (!target) return ($('#ferr').textContent = 'Elige una categoría.');
+    if (target === 'new'){
+      // Si es subcategoría, primero busca (o crea) su categoría madre en el otro lado
+      const scope = to === 'p' ? {owner_id:me(), family_id:null} : {owner_id:null, family_id:S.family.id};
+      let parentId = null;
+      if (c.parent){
+        const pc = cat(c.parent);
+        const pm = S.categories.find(x => x.scope === to && !x.parent && x.kind === pc.kind && sameName(x.name, pc.name));
+        parentId = pm ? pm.id : (await q(sb.from('categories').insert({...scope, name:pc.name, kind:pc.kind, icon:pc.icon, color:pc.color, sort_order:100}).select('id').single())).id;
+      }
+      const dup = S.categories.find(x => x.scope === to && x.kind === c.kind && sameName(x.name, c.name));
+      target = dup && !S.budgets.some(x => x.cat === dup.id) ? dup.id
+        : (await q(sb.from('categories').insert({...scope, name:dup ? (c.name + (to === 'f' ? ' (familia)' : ' (personal)')).slice(0, 40) : c.name, kind:c.kind, icon:c.icon, color:c.color, parent_id:parentId, sort_order:100}).select('id').single())).id;
+    }
+    await q(sb.from('budgets').update({category_id:target}).eq('id', b.id));
+    closeSheet(); await Promise.all([loadCategories(), loadBudgets()]);
+    S.ui.budScope = to === 'f' ? 'family' : 'personal'; render();
+    toast(`Presupuesto de ${c.name} ahora es ${to === 'f' ? 'de la familia' : 'personal'}`);
   },
   budget: async f => {
     const id = f.dataset.id, err = $('#ferr'), amount = round2(parseAmt($('#bu-a').value)), alert = Number($('#bu-p').value);
